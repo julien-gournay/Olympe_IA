@@ -1,0 +1,64 @@
+# Configuration de la solution de capture PCAP - Celestis_IA
+# Module Zeus
+
+# Configuration de la capture réseau
+capture:
+  # Interface réseau à capturer (null = toutes les interfaces)
+  interface: null
+  
+  # Répertoire de sortie pour les fichiers PCAP
+  output_directory: captures
+  
+  # Filtre BPF optionnel (Berkeley Packet Filter)
+  # Exemples:
+  #   - "tcp port 80"           # Trafic HTTP
+  #   - "tcp port 443"          # Trafic HTTPS
+  #   - "udp port 53"           # Requêtes DNS
+  #   - "host 192.168.1.1"      # Trafic d'un hôte spécifique
+  #   - "net 192.168.1.0/24"    # Trafic d'un sous-réseau
+  filter_bpf: null
+  
+  # Configuration de la rotation des fichiers
+  rotation:
+    enabled: true
+    max_packets: 10000        # Nombre max de paquets par fichier
+    max_duration: 300         # Durée max en secondes (5 min)
+
+# Configuration de l'ingestion et analyse
+ingestion:
+  # Chemin vers la base de données SQLite
+  database_path: pcap_database.db
+  
+  # Répertoire des logs
+  log_directory: logs
+  
+  # Ingestion automatique après capture
+  auto_ingest: true
+  
+  # Répertoire à surveiller pour l'ingestion automatique
+  watch_directory: captures
+
+# Configuration du service de capture
+service:
+  # Mode capture continue
+  continuous_capture: false
+  
+  # Intervalle entre les captures (en secondes)
+  interval: 60
+  
+  # Démarrage automatique au boot (non implémenté)
+  auto_start: false
+
+# Configuration de l'analyse
+analysis:
+  # Activer les statistiques détaillées
+  enable_statistics: true
+  
+  # Activer l'export automatique
+  enable_export: false
+  
+  # Format d'export (json, csv)
+  export_format: json
+  
+  # Répertoire d'export
+  export_directory: exports
