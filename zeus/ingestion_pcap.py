@@ -15,7 +15,10 @@ from pathlib import Path
 from typing import Dict, List, Optional, Any
 
 try:
-    from scapy.all import rdpcap, IP, TCP, UDP, ICMP, DNS, Raw
+    from scapy.utils import rdpcap
+    from scapy.layers.inet import IP, TCP, UDP, ICMP
+    from scapy.layers.dns import DNS
+    from scapy.packet import Raw
     from scapy.layers.http import HTTPRequest, HTTPResponse
 except ImportError:
     print("Erreur: Scapy n'est pas installé. Installez-le avec: pip install scapy")
@@ -303,6 +306,95 @@ class PcapIngestion:
         
         self.logger.info(f"Analyse terminée: {len(packets)} paquets")
     
+    def extract_flows(self, pcap_path: str) -> Dict[tuple, Dict]:
+        """
+        Extrait les flux (flows) d'un fichier PCAP.
+        Regroupe les paquets par (src_ip, dst_ip, src_port, dst_port, protocol).
+        
+        Args:
+            pcap_path: Chemin vers le fichier PCAP
+            
+        Returns:
+            Dictionnaire des flux identifiés par un tuple (src_ip, dst_ip, src_port, dst_port, protocol)
+        """
+        flows = {}
+        pcap_path_obj = Path(pcap_path)
+        
+        if not pcap_path_obj.exists():
+            self.logger.error(f"Fichier introuvable pour l'extraction de flux: {pcap_path}")
+            return {}
+            
+        self.logger.info(f"Extraction des flux pour: {pcap_path}")
+        
+        try:
+            # Utilisation de rdpcap (attention à la mémoire pour les gros fichiers)
+            packets = rdpcap(str(pcap_path))
+            
+            for packet in packets:
+                # On s'intéresse principalement aux paquets IP
+                if not packet.haslayer(IP):
+                    continue
+                    
+                src_ip = packet[IP].src
+                dst_ip = packet[IP].dst
+                # Le champ proto de IP donne le numéro de protocole (6 pour TCP, 17 pour UDP, etc.)
+                # On peut le mapper vers un nom si nécessaire, mais le numéro est plus sûr pour la clé
+                proto_num = packet[IP].proto
+                
+                src_port = 0
+                dst_port = 0
+                protocol_name = "IP"
+                
+                if packet.haslayer(TCP):
+                    src_port = packet[TCP].sport
+                    dst_port = packet[TCP].dport
+                    protocol_name = "TCP"
+                elif packet.haslayer(UDP):
+                    src_port = packet[UDP].sport
+                    dst_port = packet[UDP].dport
+                    protocol_name = "UDP"
+                elif packet.haslayer(ICMP):
+                    protocol_name = "ICMP"
+                
+                # Clé unique pour le flux (unidirectionnel)
+                flow_key = (src_ip, dst_ip, src_port, dst_port, protocol_name)
+                
+                timestamp = float(packet.time)
+                packet_len = len(packet)
+                
+                if flow_key not in flows:
+                    flows[flow_key] = {
+                        'src_ip': src_ip,
+                        'dst_ip': dst_ip,
+                        'src_port': src_port,
+                        'dst_port': dst_port,
+                        'protocol': protocol_name,
+                        'packet_count': 0,
+                        'byte_count': 0,
+                        'start_time': timestamp,
+                        'end_time': timestamp,
+                        'duration': 0.0
+                    }
+                
+                flow = flows[flow_key]
+                flow['packet_count'] += 1
+                flow['byte_count'] += packet_len
+                
+                # Mise à jour des temps
+                if timestamp < flow['start_time']:
+                    flow['start_time'] = timestamp
+                if timestamp > flow['end_time']:
+                    flow['end_time'] = timestamp
+                    
+                flow['duration'] = flow['end_time'] - flow['start_time']
+            
+            self.logger.info(f"Flux extraits: {len(flows)}")
+            return flows
+            
+        except Exception as e:
+            self.logger.error(f"Erreur lors de l'extraction des flux: {e}")
+            return {}
+
     def ingest_directory(self, directory: str, pattern: str = "*.pcap"):
         """
         Ingère tous les fichiers PCAP d'un répertoire
@@ -544,6 +636,9 @@ Exemples d'utilisation:
     parser.add_argument('--pcap-id',
                         type=int,
                         help='ID du fichier PCAP pour la requête')
+    parser.add_argument('--flows',
+                        action='store_true',
+                        help='Extraire et afficher les flux du fichier spécifié par -f')
     
     args = parser.parse_args()
     
@@ -553,6 +648,23 @@ Exemples d'utilisation:
     # Lister les fichiers ingérés
     if args.list:
         ingestion.list_ingested_files()
+        return
+
+    # Extraire les flux
+    if args.flows and args.file:
+        flows = ingestion.extract_flows(args.file)
+        print(f"\n=== Flux extraits ({len(flows)}) ===")
+        # Trier par nombre de paquets décroissant
+        sorted_flows = sorted(flows.values(), key=lambda x: x['packet_count'], reverse=True)
+        
+        for i, flow in enumerate(sorted_flows[:20]):  # Top 20
+            print(f"\nFlux #{i+1}")
+            print(f"  {flow['src_ip']}:{flow['src_port']} -> {flow['dst_ip']}:{flow['dst_port']} ({flow['protocol']})")
+            print(f"  Paquets: {flow['packet_count']}, Octets: {flow['byte_count']}")
+            print(f"  Durée: {flow['duration']:.4f}s")
+        
+        if len(flows) > 20:
+            print(f"\n... et {len(flows) - 20} autres flux")
         return
     
     # Exporter en JSON

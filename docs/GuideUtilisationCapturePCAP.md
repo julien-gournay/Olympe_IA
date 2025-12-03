@@ -54,6 +54,20 @@ Cela va :
 python deploy_capture.py --status
 ```
 
+### 4. Configuration avancée du déploiement
+
+Le script de déploiement offre plusieurs options utiles :
+
+- **Générer une configuration exemple** :
+  ```powershell
+  python deploy_capture.py --generate-config
+  ```
+
+- **Vérifier uniquement les dépendances** :
+  ```powershell
+  python deploy_capture.py --check-deps
+  ```
+
 ---
 
 ## 📡 Capture de trafic réseau
@@ -286,6 +300,30 @@ Paquet #2
 ...
 ```
 
+### Analyse de flux (Flows)
+
+L'option `--flows` permet d'extraire et d'afficher les flux de communication (regroupement de paquets par connexion) d'un fichier PCAP.
+
+```powershell
+python ingestion_pcap.py -f captures\capture_20251112_143000.pcap --flows
+```
+
+**Exemple de sortie :**
+```
+=== Flux extraits (15) ===
+
+Flux #1
+  192.168.1.50:52341 -> 8.8.8.8:443 (TCP)
+  Paquets: 150, Octets: 12540
+  Durée: 15.2000s
+
+Flux #2
+  192.168.1.50:53 -> 8.8.8.8:53 (UDP)
+  Paquets: 2, Octets: 180
+  Durée: 0.0500s
+...
+```
+
 ### Export des données
 
 #### Export en JSON
@@ -408,6 +446,10 @@ service:
 ingestion:
   auto_ingest: true         # Ingestion automatique
   watch_directory: captures # Répertoire surveillé
+
+analysis:
+  enable_statistics: true   # Activer les stats
+  enable_export: false      # Export automatique JSON
 ```
 
 ---
