@@ -180,7 +180,7 @@ class NetworkCapture:
             Path: Chemin du fichier sauvegardé
         """
         if not self.packets:
-            self.logger.warning(f"Aucun paquet à sauvegarder (total: {len(self.packets)})")
+            self.logger.warning("Aucun paquet à sauvegarder")
             return None
             
         if filename is None:

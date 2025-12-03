@@ -159,6 +159,13 @@ class PcapIngestion:
             with sqlite3.connect(self.db_path) as conn:
                 cursor = conn.cursor()
                 
+                # Vérifier si le fichier existe déjà
+                cursor.execute("SELECT id FROM pcap_files WHERE filename = ?", (pcap_path.name,))
+                existing = cursor.fetchone()
+                if existing:
+                    self.logger.warning(f"Le fichier {pcap_path.name} a déjà été ingéré (ID: {existing[0]})")
+                    return existing[0]
+                
                 cursor.execute("""
                     INSERT INTO pcap_files 
                     (filename, file_path, file_size, ingestion_date, packet_count, 

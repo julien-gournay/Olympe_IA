@@ -8,10 +8,10 @@ import argparse
 import logging
 import signal
 import sys
-import time
 from datetime import datetime
 from pathlib import Path
-from threading import Event, Thread
+from threading import Event
+from typing import Optional
 
 import yaml
 
@@ -40,8 +40,8 @@ class CaptureService:
         self.logger = self._setup_logging()
         
         # Composants
-        self.capture = None
-        self.ingestion = None
+        self.capture: Optional[NetworkCapture] = None
+        self.ingestion: Optional[PcapIngestion] = None
         
         # Statistiques
         self.stats = {
@@ -112,14 +112,18 @@ class CaptureService:
             self.logger.error(f"Erreur lors de l'initialisation: {e}")
             return False
     
-    def capture_session(self) -> str:
+    def capture_session(self) -> Optional[Path]:
         """
         Effectue une session de capture
         
         Returns:
-            Chemin du fichier PCAP créé ou None
+            Chemin du fichier PCAP créé (Path) ou None
         """
         try:
+            if not self.capture:
+                self.logger.error("Capture non initialisée")
+                return None
+                
             capture_config = self.config.get('capture', {})
             rotation_config = capture_config.get('rotation', {})
             
@@ -159,6 +163,10 @@ class CaptureService:
             True si succès
         """
         try:
+            if not self.ingestion:
+                self.logger.error("Ingestion non initialisée")
+                return False
+                
             self.logger.info(f"Ingestion de {pcap_file.name}")
             pcap_id = self.ingestion.ingest_pcap(str(pcap_file))
             

@@ -5,15 +5,11 @@ Celestis_IA - Module Zeus
 """
 
 import argparse
-import json
 import logging
 import os
 import platform
-import shutil
-import subprocess
 import sys
 from pathlib import Path
-from typing import Optional
 
 import yaml
 
@@ -120,24 +116,30 @@ class CaptureDeployment:
                 else:
                     self.logger.info("  ✓ Privilèges administrateur")
                 return True  # On continue même sans admin sur Windows
-            except:
-                self.logger.warning("  ⚠ Impossible de vérifier les privilèges")
+            except Exception as e:
+                self.logger.warning(f"  ⚠ Impossible de vérifier les privilèges: {e}")
                 return True
         
         elif system == 'Linux':
-            if os.geteuid() != 0:
-                self.logger.warning("  ⚠ Non-root: certaines interfaces peuvent être inaccessibles")
-                self.logger.info("  Utilisez sudo si nécessaire")
-            else:
-                self.logger.info("  ✓ Privilèges root")
+            try:
+                if os.geteuid() != 0:  # type: ignore
+                    self.logger.warning("  ⚠ Non-root: certaines interfaces peuvent être inaccessibles")
+                    self.logger.info("  Utilisez sudo si nécessaire")
+                else:
+                    self.logger.info("  ✓ Privilèges root")
+            except AttributeError:
+                self.logger.warning("  ⚠ Impossible de vérifier les privilèges")
             return True
         
         elif system == 'Darwin':  # macOS
-            if os.geteuid() != 0:
-                self.logger.warning("  ⚠ Non-root: certaines interfaces peuvent être inaccessibles")
-                self.logger.info("  Utilisez sudo si nécessaire")
-            else:
-                self.logger.info("  ✓ Privilèges root")
+            try:
+                if os.geteuid() != 0:  # type: ignore
+                    self.logger.warning("  ⚠ Non-root: certaines interfaces peuvent être inaccessibles")
+                    self.logger.info("  Utilisez sudo si nécessaire")
+                else:
+                    self.logger.info("  ✓ Privilèges root")
+            except AttributeError:
+                self.logger.warning("  ⚠ Impossible de vérifier les privilèges")
             return True
         
         return True
