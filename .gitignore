@@ -2,3 +2,9 @@
 captures/
 logs/
 exports/
+
+# Python cache files
+__pycache__/
+
+# BDD SQLite
+*.db
