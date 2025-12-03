@@ -24,25 +24,50 @@ except ImportError:
     print("Erreur: Scapy n'est pas installé. Installez-le avec: pip install scapy")
     exit(1)
 
+try:
+    from threat_analyzer import ThreatAnalyzer
+    THREAT_ANALYSIS_AVAILABLE = True
+except ImportError:
+    THREAT_ANALYSIS_AVAILABLE = False
+    print("Avertissement: threat_analyzer non disponible. L'analyse de menaces sera désactivée.")
+
 
 class PcapIngestion:
     """Classe pour l'ingestion et l'analyse de fichiers PCAP"""
     
-    def __init__(self, db_path: str = "pcap_database.db", log_dir: str = "logs"):
+    def __init__(self, db_path: str = "pcap_database.db", log_dir: str = "logs",
+                 enable_yara: bool = True, yara_rules_path: str = "config/yara_rules.yar"):
         """
         Initialise le module d'ingestion
         
         Args:
             db_path: Chemin vers la base de données SQLite
             log_dir: Répertoire pour les logs
+            enable_yara: Activer l'analyse YARA
+            yara_rules_path: Chemin vers les règles YARA
         """
         self.db_path = Path(db_path)
         self.log_dir = Path(log_dir)
         self.log_dir.mkdir(parents=True, exist_ok=True)
-        
+        self.enable_yara = enable_yara and THREAT_ANALYSIS_AVAILABLE
+
         self._setup_logging()
         self._init_database()
         
+        # Initialiser l'analyseur de menaces si disponible
+        self.yara_analyzer = None
+        if self.enable_yara:
+            try:
+                self.yara_analyzer = ThreatAnalyzer(
+                    rules_path=yara_rules_path,
+                    db_path=str(self.db_path),
+                    log_dir=str(self.log_dir)
+                )
+                self.logger.info("Analyseur de menaces initialisé")
+            except Exception as e:
+                self.logger.warning(f"Impossible d'initialiser l'analyseur de menaces: {e}")
+                self.yara_analyzer = None
+
     def _setup_logging(self):
         """Configure le système de logging"""
         log_file = self.log_dir / f"ingestion_{datetime.now().strftime('%Y%m%d')}.log"
@@ -192,7 +217,16 @@ class PcapIngestion:
                     self._analyze_packets(cursor, pcap_file_id, packets)
                 
                 conn.commit()
-                
+
+            # Analyse de menaces si activée
+            if self.yara_analyzer and pcap_file_id is not None:
+                self.logger.info("Analyse de menaces en cours...")
+                alerts = self.yara_analyzer.analyze_pcap(str(pcap_path), pcap_file_id, verbose=False)
+                if alerts:
+                    self.logger.warning(f"[!] {len(alerts)} alerte(s) de menace detectee(s)!")
+                else:
+                    self.logger.info("[OK] Aucune menace detectee")
+
             self.logger.info(f"Ingestion terminée. ID: {pcap_file_id}, Paquets: {packet_count}")
             return pcap_file_id
             
@@ -615,6 +649,23 @@ Exemples d'utilisation:
     parser.add_argument('--log-dir',
                         default='logs',
                         help='Répertoire des logs (défaut: logs)')
+    parser.add_argument('--enable-yara',
+                        action='store_true',
+                        default=True,
+                        help='Activer l\'analyse YARA (activé par défaut)')
+    parser.add_argument('--disable-yara',
+                        action='store_true',
+                        help='Désactiver l\'analyse YARA')
+    parser.add_argument('--yara-rules',
+                        default='config/yara_rules.yar',
+                        help='Chemin vers les règles YARA (défaut: config/yara_rules.yar)')
+    parser.add_argument('--yara-alerts',
+                        type=int,
+                        metavar='PCAP_ID',
+                        help='Afficher les alertes YARA pour un fichier PCAP')
+    parser.add_argument('--yara-severity',
+                        choices=['INFO', 'LOW', 'MEDIUM', 'HIGH', 'CRITICAL'],
+                        help='Filtrer les alertes YARA par sévérité')
     parser.add_argument('--list',
                         action='store_true',
                         help='Lister les fichiers PCAP ingérés')
@@ -642,9 +693,45 @@ Exemples d'utilisation:
     
     args = parser.parse_args()
     
+    # Déterminer si YARA doit être activé
+    enable_yara = args.enable_yara and not args.disable_yara
+
     # Créer l'instance d'ingestion
-    ingestion = PcapIngestion(db_path=args.db, log_dir=args.log_dir)
-    
+    ingestion = PcapIngestion(
+        db_path=args.db,
+        log_dir=args.log_dir,
+        enable_yara=enable_yara,
+        yara_rules_path=args.yara_rules
+    )
+
+    # Afficher les alertes de menaces
+    if args.yara_alerts:
+        if not ingestion.yara_analyzer:
+            print("Erreur: Analyseur de menaces non disponible")
+            return
+
+        if args.yara_severity:
+            alerts = ingestion.yara_analyzer.get_alerts_by_severity(
+                args.yara_alerts, args.yara_severity
+            )
+            print(f"\n=== Alertes de menaces - Sévérité: {args.yara_severity} ({len(alerts)}) ===")
+        else:
+            alerts = ingestion.yara_analyzer.get_all_alerts(args.yara_alerts)
+            print(f"\n=== Toutes les alertes de menaces ({len(alerts)}) ===")
+
+        for alert in alerts:
+            print(f"\n{'='*70}")
+            print(f"🚨 {alert['rule_name']} - Sévérité: {alert['severity']}")
+            print(f"{'='*70}")
+            print(f"Description: {alert['description']}")
+            print(f"Paquet: #{alert['packet_number']}")
+            print(f"Timestamp: {alert['timestamp']}")
+            print(f"Protocole: {alert['protocol']}")
+            if alert['src_ip'] and alert['dst_ip']:
+                print(f"Flux: {alert['src_ip']}:{alert['src_port']} -> {alert['dst_ip']}:{alert['dst_port']}")
+
+        return
+
     # Lister les fichiers ingérés
     if args.list:
         ingestion.list_ingested_files()
