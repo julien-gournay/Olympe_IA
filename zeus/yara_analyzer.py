@@ -141,12 +141,12 @@ class YaraAnalyzer:
                     'description': 'Détecte des tentatives d\'injection SQL potentielles',
                     'severity': 'HIGH',
                     'patterns': [
-                        'UNION\\s+SELECT',
-                        '\\'\\s+OR\\s+\\'1\\'=\\'1',
-                        '\\'\\s*;\\s*DROP\\s+TABLE',
-                        '\\'\\s+OR\\s+1=1--',
-                        'admin\\'--',
-                        '1\\'\\s+UNION\\s+SELECT\\s+NULL'
+                        r'UNION\s+SELECT',
+                        r"'\s+OR\s+'1'='1",
+                        r"'\s*;\s*DROP\s+TABLE",
+                        r"'\s+OR\s+1=1--",
+                        r"admin'--",
+                        r"1'\s+UNION\s+SELECT\s+NULL"
                     ],
                     'case_sensitive': False
                 },
@@ -165,192 +165,117 @@ class YaraAnalyzer:
                     'case_sensitive': False
                 },
                 {
-                    'name': 'Suspicious_Command_Injection
-{
-    meta:
-        description = "Détecte des tentatives d'injection SQL potentielles"
-        severity = "HIGH"
-        author = "Celestis_IA"
+                    'name': 'Suspicious_Command_Injection',
+                    'description': 'Détecte des tentatives d\'injection de commandes',
+                    'severity': 'HIGH',
+                    'patterns': [
+                        r';/bin/sh',
+                        r'\|/bin/bash',
+                        r'&& cat /etc/passwd',
+                        r'\| nc ',
+                        r'/bin/ls',
+                        r'wget http',
+                        r'curl http'
+                    ],
+                    'case_sensitive': False
+                },
+                {
+                    'name': 'Suspicious_Path_Traversal',
+                    'description': 'Détecte des tentatives de path traversal',
+                    'severity': 'MEDIUM',
+                    'patterns': [
+                        r'\.\./\.\./\.\./',
+                        r'\.\.\\\.\.\\\.\.\.',
+                        r'/etc/passwd',
+                        r'/etc/shadow',
+                        r'c:\\windows\\system32'
+                    ],
+                    'case_sensitive': False
+                },
+                {
+                    'name': 'Malware_UserAgent',
+                    'description': 'Détecte des User-Agent suspects associés à des malwares',
+                    'severity': 'HIGH',
+                    'patterns': [
+                        'Gh0st',
+                        'ZmEu',
+                        'Nikto',
+                        'sqlmap',
+                        'Metasploit',
+                        'python-requests/2\\.6'
+                    ],
+                    'case_sensitive': False
+                },
+                {
+                    'name': 'Suspicious_Executable_Transfer',
+                    'description': 'Détecte le transfert de fichiers exécutables suspects',
+                    'severity': 'CRITICAL',
+                    'patterns': [
+                        r'\.exe',
+                        r'\.dll',
+                        r'\.scr',
+                        r'\.bat',
+                        r'\.vbs',
+                        r'\.ps1'
+                    ],
+                    'case_sensitive': False
+                },
+                {
+                    'name': 'Suspicious_Encoded_Payload',
+                    'description': 'Détecte des payloads encodés suspects',
+                    'severity': 'MEDIUM',
+                    'patterns': [
+                        r'eval\s*\(',
+                        'base64_decode',
+                        'FromBase64String',
+                        r'atob\('
+                    ],
+                    'case_sensitive': False
+                },
+                {
+                    'name': 'Suspicious_Reverse_Shell',
+                    'description': 'Détecte des indicateurs de reverse shell',
+                    'severity': 'CRITICAL',
+                    'patterns': [
+                        '/bin/bash -i',
+                        'nc -e /bin/sh',
+                        'bash -c',
+                        r"python -c 'import socket",
+                        r"perl -e 'use Socket",
+                        '/dev/tcp/'
+                    ],
+                    'case_sensitive': False
+                },
+                {
+                    'name': 'Suspicious_Credentials_Leak',
+                    'description': 'Détecte des fuites potentielles d\'identifiants',
+                    'severity': 'HIGH',
+                    'patterns': [
+                        'password=',
+                        'passwd=',
+                        'pwd=',
+                        'api_key=',
+                        'apikey=',
+                        'token=',
+                        'Authorization: Bearer'
+                    ],
+                    'case_sensitive': False
+                },
+                {
+                    'name': 'Suspicious_Port_Scan',
+                    'description': 'Détecte des patterns de scan de ports',
+                    'severity': 'LOW',
+                    'patterns': [
+                        'nmap',
+                        'masscan'
+                    ],
+                    'case_sensitive': False
+                }
+            ]
+        }
 
-    strings:
-        $sql1 = "UNION SELECT" nocase
-        $sql2 = "' OR '1'='1" nocase
-        $sql3 = "'; DROP TABLE" nocase
-        $sql4 = "' OR 1=1--" nocase
-        $sql5 = "admin'--" nocase
-        $sql6 = "1' UNION SELECT NULL" nocase
-
-    condition:
-        any of ($sql*)
-}
-
-rule Suspicious_XSS_Attempt
-{
-    meta:
-        description = "Détecte des tentatives de Cross-Site Scripting (XSS)"
-        severity = "MEDIUM"
-        author = "Celestis_IA"
-
-    strings:
-        $xss1 = "<script>" nocase
-        $xss2 = "javascript:" nocase
-        $xss3 = "onerror=" nocase
-        $xss4 = "onload=" nocase
-        $xss5 = "<iframe" nocase
-        $xss6 = "document.cookie" nocase
-
-    condition:
-        any of ($xss*)
-}
-
-rule Suspicious_Command_Injection
-{
-    meta:
-        description = "Détecte des tentatives d'injection de commandes"
-        severity = "HIGH"
-        author = "Celestis_IA"
-
-    strings:
-        $cmd1 = ";/bin/sh" nocase
-        $cmd2 = "|/bin/bash" nocase
-        $cmd3 = "&& cat /etc/passwd" nocase
-        $cmd4 = "| nc " nocase
-        $cmd5 = "/bin/ls" nocase
-        $cmd6 = "wget http" nocase
-        $cmd7 = "curl http" nocase
-
-    condition:
-        any of ($cmd*)
-}
-
-rule Suspicious_Path_Traversal
-{
-    meta:
-        description = "Détecte des tentatives de path traversal"
-        severity = "MEDIUM"
-        author = "Celestis_IA"
-
-    strings:
-        $path1 = "../../../"
-        $path2 = "..\\..\\...\\"
-        $path3 = "/etc/passwd" nocase
-        $path4 = "/etc/shadow" nocase
-        $path5 = "c:\\windows\\system32" nocase
-
-    condition:
-        any of ($path*)
-}
-
-rule Malware_UserAgent
-{
-    meta:
-        description = "Détecte des User-Agent suspects associés à des malwares"
-        severity = "HIGH"
-        author = "Celestis_IA"
-
-    strings:
-        $ua1 = "Gh0st" nocase
-        $ua2 = "ZmEu" nocase
-        $ua3 = "Nikto" nocase
-        $ua4 = "sqlmap" nocase
-        $ua5 = "Metasploit" nocase
-        $ua6 = "python-requests/2.6" // Version utilisée par certains malwares
-
-    condition:
-        any of ($ua*)
-}
-
-rule Suspicious_Executable_Transfer
-{
-    meta:
-        description = "Détecte le transfert de fichiers exécutables suspects"
-        severity = "CRITICAL"
-        author = "Celestis_IA"
-
-    strings:
-        $exe1 = { 4D 5A } // MZ header (EXE)
-        $exe2 = ".exe" nocase
-        $exe3 = ".dll" nocase
-        $exe4 = ".scr" nocase
-        $exe5 = ".bat" nocase
-        $exe6 = ".vbs" nocase
-        $exe7 = ".ps1" nocase
-
-    condition:
-        $exe1 at 0 or any of ($exe2, $exe3, $exe4, $exe5, $exe6, $exe7)
-}
-
-rule Suspicious_Encoded_Payload
-{
-    meta:
-        description = "Détecte des payloads encodés suspects"
-        severity = "MEDIUM"
-        author = "Celestis_IA"
-
-    strings:
-        $enc1 = /eval\s*\(/ nocase
-        $enc2 = "base64_decode" nocase
-        $enc3 = "FromBase64String" nocase
-        $enc4 = "atob(" nocase // JavaScript base64 decode
-
-    condition:
-        any of ($enc*)
-}
-
-rule Suspicious_Reverse_Shell
-{
-    meta:
-        description = "Détecte des indicateurs de reverse shell"
-        severity = "CRITICAL"
-        author = "Celestis_IA"
-
-    strings:
-        $shell1 = "/bin/bash -i" nocase
-        $shell2 = "nc -e /bin/sh" nocase
-        $shell3 = "bash -c" nocase
-        $shell4 = "python -c 'import socket" nocase
-        $shell5 = "perl -e 'use Socket" nocase
-        $shell6 = "/dev/tcp/" nocase
-
-    condition:
-        any of ($shell*)
-}
-
-rule Suspicious_Credentials_Leak
-{
-    meta:
-        description = "Détecte des fuites potentielles d'identifiants"
-        severity = "HIGH"
-        author = "Celestis_IA"
-
-    strings:
-        $cred1 = "password=" nocase
-        $cred2 = "passwd=" nocase
-        $cred3 = "pwd=" nocase
-        $cred4 = "api_key=" nocase
-        $cred5 = "apikey=" nocase
-        $cred6 = "token=" nocase
-        $cred7 = "Authorization: Bearer" nocase
-
-    condition:
-        any of ($cred*)
-}
-
-rule Suspicious_Port_Scan
-{
-    meta:
-        description = "Détecte des patterns de scan de ports"
-        severity = "LOW"
-        author = "Celestis_IA"
-
-    strings:
-        $scan1 = "nmap" nocase
-        $scan2 = "masscan" nocase
-
-    condition:
-        any of ($scan*)
-}
-'''
+        # Convertir en YAML
+        default_rules = yaml.dump(default_rules_dict, default_flow_style=False, allow_unicode=True)
 
         try:
             with open(self.rules_path, 'w', encoding='utf-8') as f:
