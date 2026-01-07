@@ -8,3 +8,7 @@ __pycache__/
 
 # BDD SQLite
 *.db
+
+# Fichiers IDEs
+.vscode/
+.idea/
