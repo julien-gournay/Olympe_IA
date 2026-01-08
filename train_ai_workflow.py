@@ -14,6 +14,13 @@ import argparse
 from pathlib import Path
 from datetime import datetime
 import os
+import threading
+
+try:
+    from tqdm import tqdm
+    TQDM_AVAILABLE = True
+except ImportError:
+    TQDM_AVAILABLE = False
 
 class Colors:
     """Couleurs pour l'affichage terminal"""
@@ -62,22 +69,66 @@ class AITrainingWorkflow:
         """Affiche un message d'avertissement"""
         print(f"{Colors.WARNING}⚠ {message}{Colors.ENDC}")
     
-    def run_command(self, cmd, cwd=None, timeout=None):
-        """Exécute une commande et retourne le résultat"""
+    def progress_timer(self, stop_event, message="En cours"):
+        """Affiche un timer et un spinner pendant l'exécution"""
+        spinner = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
+        idx = 0
+        start_time = time.time()
+        
+        while not stop_event.is_set():
+            elapsed = int(time.time() - start_time)
+            mins, secs = divmod(elapsed, 60)
+            timer_str = f"{mins:02d}:{secs:02d}"
+            
+            # Afficher le spinner et le timer
+            print(f"\r{Colors.OKCYAN}{spinner[idx]} {message}... [{timer_str}]{Colors.ENDC}", end='', flush=True)
+            idx = (idx + 1) % len(spinner)
+            time.sleep(0.1)
+        
+        # Effacer la ligne du spinner
+        print("\r" + " " * 80 + "\r", end='', flush=True)
+    
+    def run_command(self, cmd, cwd=None, timeout=None, progress_msg="Exécution"):
+        """Exécute une commande et retourne le résultat avec timer"""
         try:
             self.print_info(f"Commande: {' '.join(cmd)}")
-            result = subprocess.run(
-                cmd,
-                cwd=cwd or self.root_dir,
-                capture_output=True,
-                text=True,
-                timeout=timeout,
-                check=True
+            
+            # Démarrer le timer dans un thread séparé
+            stop_event = threading.Event()
+            timer_thread = threading.Thread(
+                target=self.progress_timer,
+                args=(stop_event, progress_msg)
             )
+            timer_thread.daemon = True
+            timer_thread.start()
+            
+            start_time = time.time()
+            
+            try:
+                result = subprocess.run(
+                    cmd,
+                    cwd=cwd or self.root_dir,
+                    capture_output=True,
+                    text=True,
+                    timeout=timeout,
+                    check=True
+                )
+            finally:
+                # Arrêter le timer
+                stop_event.set()
+                timer_thread.join(timeout=1)
+                
+                # Afficher le temps écoulé
+                elapsed = time.time() - start_time
+                mins, secs = divmod(int(elapsed), 60)
+                self.print_info(f"Temps d'exécution: {mins}m {secs}s")
+            
             if result.stdout:
                 print(result.stdout)
             return True, result.stdout
         except subprocess.CalledProcessError as e:
+            stop_event.set()
+            timer_thread.join(timeout=1)
             self.print_error(f"Erreur lors de l'exécution: {e}")
             if e.stdout:
                 print(f"STDOUT: {e.stdout}")
@@ -85,9 +136,13 @@ class AITrainingWorkflow:
                 print(f"STDERR: {e.stderr}")
             return False, e.stderr
         except subprocess.TimeoutExpired:
+            stop_event.set()
+            timer_thread.join(timeout=1)
             self.print_error(f"Timeout atteint")
             return False, "Timeout"
         except Exception as e:
+            stop_event.set()
+            timer_thread.join(timeout=1)
             self.print_error(f"Erreur inattendue: {e}")
             return False, str(e)
     
@@ -122,7 +177,12 @@ class AITrainingWorkflow:
         # Timeout = durée + 2 minutes de marge
         timeout = (self.duration_minutes + 2) * 60
         
-        success, output = self.run_command(cmd, cwd=self.zeus_dir, timeout=timeout)
+        success, output = self.run_command(
+            cmd, 
+            cwd=self.zeus_dir, 
+            timeout=timeout,
+            progress_msg=f"Capture réseau ({self.duration_minutes} min)"
+        )
         
         if success and capture_path.exists():
             size_mb = capture_path.stat().st_size / (1024 * 1024)
@@ -143,7 +203,12 @@ class AITrainingWorkflow:
             "--enable-yara"
         ]
         
-        success, output = self.run_command(cmd, cwd=self.zeus_dir, timeout=600)
+        success, output = self.run_command(
+            cmd, 
+            cwd=self.zeus_dir, 
+            timeout=600,
+            progress_msg="Ingestion et analyse YARA"
+        )
         
         if success:
             self.print_success("Ingestion et analyse YARA terminées")
@@ -163,7 +228,12 @@ class AITrainingWorkflow:
             "--db", str(self.db_path)
         ]
         
-        success, output = self.run_command(cmd, cwd=self.ml_dir, timeout=300)
+        success, output = self.run_command(
+            cmd, 
+            cwd=self.ml_dir, 
+            timeout=300,
+            progress_msg="Construction du dataset ML"
+        )
         
         if success:
             self.print_success("Dataset ML construit avec succès")
@@ -193,7 +263,12 @@ class AITrainingWorkflow:
         
         self.print_info(f"Nom du modèle: {model_name}")
         
-        success, output = self.run_command(cmd, cwd=self.ml_dir, timeout=600)
+        success, output = self.run_command(
+            cmd, 
+            cwd=self.ml_dir, 
+            timeout=600,
+            progress_msg="Entraînement du modèle Random Forest"
+        )
         
         if success:
             self.print_success(f"Modèle entraîné avec succès: {model_name}")
@@ -222,7 +297,12 @@ class AITrainingWorkflow:
             "--model", f"models/{model_name}"
         ]
         
-        success, output = self.run_command(cmd, cwd=self.ml_dir, timeout=300)
+        success, output = self.run_command(
+            cmd, 
+            cwd=self.ml_dir, 
+            timeout=300,
+            progress_msg="Test du modèle"
+        )
         
         if success:
             self.print_success("Test du modèle terminé")
