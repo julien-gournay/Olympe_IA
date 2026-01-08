@@ -350,10 +350,13 @@ class AITrainingWorkflow:
         """Étape 2: Ingérer et analyser le PCAP avec YARA"""
         self.print_step(2, 5, "Ingestion et analyse du PCAP avec règles YARA")
         
+        # Utiliser le chemin complet du fichier PCAP
+        capture_path = self.zeus_dir / "captures" / self.pcap_file
+        
         cmd = [
             sys.executable,
             "ingestion_pcap.py",
-            "-f", self.pcap_file,
+            "-f", str(capture_path),
             "--enable-yara"
         ]
         

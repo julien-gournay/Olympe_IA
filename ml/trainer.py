@@ -45,7 +45,9 @@ class ThreatDatasetBuilder:
         self.logger.info("Construction du dataset à partir des alertes...")
         
         if not self.db_path.exists():
-            raise FileNotFoundError(f"Database not found: {self.db_path}")
+            self.logger.warning(f"Database not found: {self.db_path}")
+            self.logger.warning("Retour d'un dataset vide. Veuillez d'abord exécuter l'ingestion PCAP.")
+            return np.array([]), np.array([])
         
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
@@ -90,6 +92,11 @@ class ThreatDatasetBuilder:
                 
                 # Charger les paquets
                 try:
+                    # Vérifier que le fichier existe
+                    if not Path(file_path).exists():
+                        self.logger.warning(f"Fichier PCAP non trouvé, ignoré: {file_path}")
+                        continue
+                    
                     packets = rdpcap(file_path)
                     
                     # Extraire les features pour chaque paquet
@@ -115,6 +122,15 @@ class ThreatDatasetBuilder:
             
             X = np.array(X_list)
             y = np.array(y_list)
+            
+            # Vérifier si le dataset est vide
+            if len(X) == 0:
+                self.logger.warning("Dataset vide!")
+                self.logger.warning("Aucune donnée n'a pu être extraite. Vérifiez que:")
+                self.logger.warning("  1. Les fichiers PCAP existent et sont accessibles")
+                self.logger.warning("  2. L'ingestion PCAP a été exécutée avec succès")
+                self.logger.warning("  3. Des alertes ont été générées pendant l'ingestion")
+                return X, y
             
             # Statistiques
             malicious_count = np.sum(y == 1)
@@ -454,6 +470,19 @@ def main():
     elif args.train:
         builder = ThreatDatasetBuilder(args.db)
         X, y = builder.build_from_alerts()
+        
+        # Vérifier que le dataset n'est pas vide
+        if len(X) == 0:
+            print("\n❌ ERREUR: Dataset vide!")
+            print("\nImpossible d'entraîner un modèle sans données.")
+            print("\nÉtapes pour résoudre ce problème:")
+            print("  1. Assurez-vous d'avoir capturé du trafic réseau (étape 1)")
+            print("  2. Exécutez l'ingestion PCAP avec analyse YARA (étape 2)")
+            print("  3. Vérifiez que des alertes ont été générées")
+            print("\nCommandes suggérées:")
+            print(f"  cd zeus")
+            print(f"  python ingestion_pcap.py -f training_ai.pcap --enable-yara")
+            sys.exit(1)
         
         if args.model_type == 'random_forest':
             model = RandomForestThreatModel()
