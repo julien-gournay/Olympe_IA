@@ -446,8 +446,14 @@ class YaraAnalyzer:
                     self.logger.info(f"  Paquets analysés: {i}/{total_packets} - Alertes: {len(all_alerts)}")
 
             # Sauvegarder les alertes dans la base de données
-            if pcap_file_id is not None and all_alerts:
-                self._save_alerts(pcap_file_id, all_alerts)
+            if pcap_file_id is not None:
+                # Si c'est training_ai.pcap, supprimer les anciennes alertes
+                if pcap_path.name == "training_ai.pcap":
+                    self.logger.info("Fichier training_ai.pcap détecté - suppression des anciennes alertes")
+                    self._delete_alerts(pcap_file_id)
+                
+                if all_alerts:
+                    self._save_alerts(pcap_file_id, all_alerts)
 
             self.logger.info(f"Analyse terminée: {len(all_alerts)} alertes détectées sur {total_packets} paquets")
 
@@ -460,6 +466,24 @@ class YaraAnalyzer:
         except Exception as e:
             self.logger.error(f"Erreur lors de l'analyse YARA: {e}")
             return []
+
+    def _delete_alerts(self, pcap_file_id: int):
+        """
+        Supprime toutes les alertes d'un fichier PCAP donné
+
+        Args:
+            pcap_file_id: ID du fichier PCAP
+        """
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute("DELETE FROM yara_alerts WHERE pcap_file_id = ?", (pcap_file_id,))
+                deleted_count = cursor.rowcount
+                conn.commit()
+                if deleted_count > 0:
+                    self.logger.info(f"{deleted_count} anciennes alertes supprimées pour le fichier PCAP ID {pcap_file_id}")
+        except Exception as e:
+            self.logger.error(f"Erreur lors de la suppression des alertes: {e}")
 
     def _save_alerts(self, pcap_file_id: int, alerts: List[Dict]):
         """

@@ -191,8 +191,19 @@ class PcapIngestion:
                 cursor.execute("SELECT id FROM pcap_files WHERE filename = ?", (pcap_path.name,))
                 existing = cursor.fetchone()
                 if existing:
-                    self.logger.warning(f"Le fichier {pcap_path.name} a déjà été ingéré (ID: {existing[0]})")
-                    return existing[0]
+                    # Si c'est training_ai.pcap, supprimer l'ancienne entrée pour la remplacer
+                    if pcap_path.name == "training_ai.pcap":
+                        self.logger.info(f"Fichier training_ai.pcap détecté - suppression de l'ancienne ingestion (ID: {existing[0]})")
+                        # Supprimer les paquets associés
+                        cursor.execute("DELETE FROM packets WHERE pcap_file_id = ?", (existing[0],))
+                        # Supprimer les statistiques associées
+                        cursor.execute("DELETE FROM statistics WHERE pcap_file_id = ?", (existing[0],))
+                        # Supprimer le fichier PCAP
+                        cursor.execute("DELETE FROM pcap_files WHERE id = ?", (existing[0],))
+                        self.logger.info("Ancienne ingestion supprimée, nouvelle ingestion en cours...")
+                    else:
+                        self.logger.warning(f"Le fichier {pcap_path.name} a déjà été ingéré (ID: {existing[0]})")
+                        return existing[0]
                 
                 cursor.execute("""
                     INSERT INTO pcap_files 
