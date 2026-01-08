@@ -70,6 +70,35 @@ class AITrainingWorkflow:
         """Affiche un message d'avertissement"""
         print(f"{Colors.WARNING}⚠ {message}{Colors.ENDC}")
     
+    def _get_next_zeus_version(self) -> str:
+        """Détermine le prochain numéro de version Zeus pour le modèle"""
+        model_dir = self.ml_dir / "models"
+        model_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Trouver tous les fichiers de modèles Zeus existants
+        existing_models = list(model_dir.glob("Zeus*.pkl"))
+        
+        if not existing_models:
+            return "Zeus1"
+        
+        # Extraire les numéros de version
+        versions = []
+        for model_file in existing_models:
+            model_name = model_file.stem  # Ex: "Zeus1", "Zeus2"
+            try:
+                version_str = model_name.replace("Zeus", "")
+                version_num = int(version_str)
+                versions.append(version_num)
+            except ValueError:
+                continue
+        
+        if versions:
+            next_version = max(versions) + 1
+        else:
+            next_version = 1
+        
+        return f"Zeus{next_version}"
+    
     def progress_timer(self, stop_event, message="En cours"):
         """Affiche un timer et un spinner pendant l'exécution"""
         spinner = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
@@ -407,7 +436,8 @@ class AITrainingWorkflow:
         """Étape 4: Entraîner le modèle"""
         self.print_step(4, 5, "Entraînement du modèle Random Forest")
         
-        model_name = f"threat_detector_{self.timestamp}"
+        # Utiliser le versionnement Zeus automatique
+        model_name = self._get_next_zeus_version()
         
         cmd = [
             sys.executable,

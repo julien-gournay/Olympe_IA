@@ -197,6 +197,45 @@ class ThreatDatasetBuilder:
         raise NotImplementedError("Feature extraction par flux à implémenter")
 
 
+def get_next_zeus_version(model_dir: str = "ml/models") -> str:
+    """
+    Détermine le prochain numéro de version Zeus pour le modèle
+    
+    Args:
+        model_dir: Répertoire contenant les modèles
+        
+    Returns:
+        Nom du modèle avec version (ex: "Zeus1", "Zeus2", etc.)
+    """
+    model_path = Path(model_dir)
+    model_path.mkdir(parents=True, exist_ok=True)
+    
+    # Trouver tous les fichiers de modèles Zeus existants
+    existing_models = list(model_path.glob("Zeus*.pkl"))
+    
+    if not existing_models:
+        return "Zeus1"
+    
+    # Extraire les numéros de version
+    versions = []
+    for model_file in existing_models:
+        model_name = model_file.stem  # Ex: "Zeus1", "Zeus2"
+        # Extraire le numéro après "Zeus"
+        try:
+            version_str = model_name.replace("Zeus", "")
+            version_num = int(version_str)
+            versions.append(version_num)
+        except ValueError:
+            continue
+    
+    if versions:
+        next_version = max(versions) + 1
+    else:
+        next_version = 1
+    
+    return f"Zeus{next_version}"
+
+
 class ContinuousLearningSystem:
     """Système d'apprentissage continu qui s'améliore avec le temps"""
     
@@ -308,15 +347,18 @@ class ContinuousLearningSystem:
             
             return False
     
-    def retrain_with_feedback(self, model_name: str = "adaptive_model",
+    def retrain_with_feedback(self, model_name: Optional[str] = None,
                              model_type: str = "random_forest"):
         """
         Ré-entraîne le modèle en incorporant les nouveaux feedbacks
         
         Args:
-            model_name: Nom du modèle à ré-entraîner/créer
+            model_name: Nom du modèle à ré-entraîner/créer (None = auto-versionnement Zeus)
             model_type: Type de modèle ('random_forest' ou 'anomaly')
         """
+        # Auto-versionnement si aucun nom spécifié
+        if model_name is None:
+            model_name = get_next_zeus_version(str(self.model_dir))
         self.logger.info("Démarrage du ré-entraînement avec feedback...")
         
         # 1. Construire le dataset de base depuis les alertes
@@ -453,8 +495,8 @@ def main():
     parser.add_argument('--model-type', default='random_forest',
                        choices=['random_forest', 'anomaly'],
                        help='Type de modèle')
-    parser.add_argument('--model-name', default='threat_detector',
-                       help='Nom du modèle')
+    parser.add_argument('--model-name', default=None,
+                       help='Nom du modèle (défaut: auto-versionnement ZeusX)')
     parser.add_argument('--db', default='pcap_database.db',
                        help='Chemin vers la base de données')
     
@@ -484,16 +526,23 @@ def main():
             print(f"  python ingestion_pcap.py -f training_ai.pcap --enable-yara")
             sys.exit(1)
         
+        # Auto-versionnement si aucun nom n'est spécifié
+        model_name = args.model_name
+        if model_name is None:
+            model_name = get_next_zeus_version()
+        
         if args.model_type == 'random_forest':
             model = RandomForestThreatModel()
         else:
             model = AnomalyDetectionModel()
         
         print(f"\nEntraînement du modèle {args.model_type}...")
+        print(f"Nom du modèle: {model_name}")
         metrics = model.train(X, y)
-        model.save(args.model_name)
+        model.save(model_name)
         
         print("\n=== Résultats ===")
+        print(f"Modèle sauvegardé: {model_name}")
         print(f"Accuracy: {metrics['val_accuracy']:.4f}")
         if 'roc_auc' in metrics:
             print(f"ROC AUC: {metrics['roc_auc']:.4f}")
