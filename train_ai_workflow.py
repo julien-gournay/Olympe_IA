@@ -147,8 +147,8 @@ class AITrainingWorkflow:
             return False, str(e)
     
     def step1_capture_traffic(self):
-        """Étape 1: Capturer le trafic réseau pendant N minutes"""
-        self.print_step(1, 5, f"Capture du trafic réseau pendant {self.duration_minutes} minutes")
+        """Étape 1: Capturer le trafic réseau avec confirmation toutes les 10 000 paquets"""
+        self.print_step(1, 5, f"Capture du trafic réseau (par lots de 10 000 paquets)")
         
         capture_path = self.zeus_dir / "captures" / self.pcap_file
         
@@ -156,37 +156,131 @@ class AITrainingWorkflow:
         capture_path.parent.mkdir(parents=True, exist_ok=True)
         
         self.print_info(f"Interface réseau: {self.interface}")
-        self.print_info(f"Durée: {self.duration_minutes} minutes ({self.duration_minutes * 60} secondes)")
+        self.print_info(f"Durée maximale: {self.duration_minutes} minutes ({self.duration_minutes * 60} secondes)")
         self.print_info(f"Fichier de sortie: {capture_path}")
         
-        # Calculer un nombre approximatif de paquets (100 paquets/sec * 60 * minutes)
-        # On utilise plutôt une capture temporisée
-        estimated_packets = self.duration_minutes * 60 * 100
-        
         self.print_warning(f"La capture va démarrer. Générez du trafic réseau pour améliorer l'entraînement.")
-        self.print_info(f"Estimation: ~{estimated_packets} paquets")
+        self.print_info(f"Vous serez invité à continuer ou arrêter toutes les 10 000 paquets")
         
-        cmd = [
-            sys.executable,
-            "capture_reseau.py",
-            "-i", self.interface,
-            "-c", str(estimated_packets),
-            "-o", f"captures/{self.pcap_file}"
-        ]
+        # Capturer par lots de 10 000 paquets
+        packet_batch_size = 10000
+        total_packets_captured = 0
+        batch_number = 0
+        temp_files = []
         
-        # Timeout = durée + 2 minutes de marge
-        timeout = (self.duration_minutes + 2) * 60
+        start_time = time.time()
+        max_duration_seconds = self.duration_minutes * 60
         
-        success, output = self.run_command(
-            cmd, 
-            cwd=self.zeus_dir, 
-            timeout=timeout,
-            progress_msg=f"Capture réseau ({self.duration_minutes} min)"
-        )
+        while True:
+            batch_number += 1
+            elapsed_time = time.time() - start_time
+            
+            # Vérifier si on a dépassé le temps maximum
+            if elapsed_time >= max_duration_seconds:
+                self.print_warning(f"Durée maximale de {self.duration_minutes} minutes atteinte")
+                break
+            
+            # Nom du fichier temporaire pour ce lot
+            temp_pcap = f"temp_batch_{batch_number}_{self.timestamp}.pcap"
+            temp_files.append(temp_pcap)
+            
+            self.print_info(f"\n📦 Lot #{batch_number} - Capture de {packet_batch_size} paquets")
+            
+            cmd = [
+                sys.executable,
+                "capture_reseau.py",
+                "-i", self.interface,
+                "-c", str(packet_batch_size),
+                "-o", f"captures/{temp_pcap}"
+            ]
+            
+            # Timeout pour un lot: 5 minutes max
+            batch_timeout = 300
+            
+            success, output = self.run_command(
+                cmd, 
+                cwd=self.zeus_dir, 
+                timeout=batch_timeout,
+                progress_msg=f"Capture lot #{batch_number} ({packet_batch_size} paquets)"
+            )
+            
+            if not success:
+                self.print_error(f"Échec de la capture du lot #{batch_number}")
+                break
+            
+            # Vérifier le fichier temporaire
+            temp_path = self.zeus_dir / "captures" / temp_pcap
+            if temp_path.exists():
+                size_mb = temp_path.stat().st_size / (1024 * 1024)
+                total_packets_captured += packet_batch_size
+                self.print_success(f"Lot #{batch_number} capturé: {size_mb:.2f} MB")
+                self.print_info(f"Total de paquets capturés: {total_packets_captured}")
+            else:
+                self.print_error(f"Le fichier temporaire n'a pas été créé: {temp_pcap}")
+                break
+            
+            # Demander à l'utilisateur s'il veut continuer
+            print(f"\n{Colors.WARNING}{'='*70}{Colors.ENDC}")
+            print(f"{Colors.BOLD}Continuer la capture?{Colors.ENDC}")
+            print(f"  - Paquets capturés: {total_packets_captured}")
+            print(f"  - Lots capturés: {batch_number}")
+            print(f"  - Temps écoulé: {int(elapsed_time // 60)}m {int(elapsed_time % 60)}s")
+            print(f"{Colors.WARNING}{'='*70}{Colors.ENDC}")
+            
+            try:
+                response = input(f"{Colors.OKCYAN}Continuer? [O/n]: {Colors.ENDC}").strip().lower()
+                if response in ['n', 'non', 'no']:
+                    self.print_info("Arrêt de la capture demandé par l'utilisateur")
+                    break
+            except (KeyboardInterrupt, EOFError):
+                self.print_warning("\nInterruption détectée, arrêt de la capture")
+                break
         
-        if success and capture_path.exists():
+        # Fusionner tous les fichiers PCAP temporaires en un seul
+        if not temp_files:
+            self.print_error("Aucun fichier capturé")
+            return False
+        
+        self.print_info(f"\n📚 Fusion de {len(temp_files)} fichier(s) PCAP...")
+        
+        if len(temp_files) == 1:
+            # Un seul fichier, simplement le renommer
+            temp_path = self.zeus_dir / "captures" / temp_files[0]
+            temp_path.rename(capture_path)
+            self.print_success("Fichier unique renommé")
+        else:
+            # Plusieurs fichiers, les fusionner avec mergecap (si disponible) ou en Python
+            try:
+                # Essayer avec mergecap (partie de Wireshark)
+                merge_cmd = ["mergecap", "-w", str(capture_path)]
+                for temp_file in temp_files:
+                    merge_cmd.append(str(self.zeus_dir / "captures" / temp_file))
+                
+                result = subprocess.run(merge_cmd, capture_output=True, text=True, timeout=300)
+                
+                if result.returncode == 0:
+                    self.print_success("Fichiers fusionnés avec mergecap")
+                    # Supprimer les fichiers temporaires
+                    for temp_file in temp_files:
+                        temp_path = self.zeus_dir / "captures" / temp_file
+                        if temp_path.exists():
+                            temp_path.unlink()
+                else:
+                    raise Exception("mergecap non disponible")
+            except:
+                # Si mergecap n'est pas disponible, simplement renommer le dernier fichier
+                # et garder les autres (l'ingestion pourra traiter plusieurs fichiers)
+                self.print_warning("mergecap non disponible, utilisation du dernier lot capturé")
+                last_temp = self.zeus_dir / "captures" / temp_files[-1]
+                last_temp.rename(capture_path)
+                self.print_info(f"Note: Les lots précédents sont toujours disponibles dans zeus/captures/")
+        
+        if capture_path.exists():
             size_mb = capture_path.stat().st_size / (1024 * 1024)
+            elapsed_total = time.time() - start_time
             self.print_success(f"Capture terminée! Fichier: {self.pcap_file} ({size_mb:.2f} MB)")
+            self.print_success(f"Total de paquets: ~{total_packets_captured}")
+            self.print_success(f"Durée totale: {int(elapsed_total // 60)}m {int(elapsed_total % 60)}s")
             return True
         else:
             self.print_error("La capture a échoué ou le fichier n'a pas été créé")
