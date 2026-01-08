@@ -1,0 +1,50 @@
+# Modèles entraînés (peuvent être volumineux)
+models/*.pkl
+models/*.h5
+models/*_scaler.pkl
+models/*_metadata.json
+
+# Données d'entraînement
+data/
+datasets/
+*.npz
+*.npy
+
+# Logs d'entraînement TensorFlow
+logs/
+tensorboard_logs/
+
+# Cache Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# Environnements virtuels
+venv/
+env/
+ENV/
+
+# Jupyter Notebooks
+.ipynb_checkpoints/
+*.ipynb
+
+# Cache scikit-learn
+.sklearn/
+
+# Fichiers temporaires
+*.tmp
+*.temp
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Datasets volumineux (commenter si vous voulez les versionner)
+# *.csv
+# *.pcap
