@@ -177,6 +177,8 @@ class AITrainingWorkflow:
                     process.kill()
                     raise subprocess.TimeoutExpired(cmd, timeout)
                 
+                if process.stdout is None:
+                    break
                 line = process.stdout.readline()
                 if not line and process.poll() is not None:
                     break
