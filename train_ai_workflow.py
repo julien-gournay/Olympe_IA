@@ -188,10 +188,14 @@ class AITrainingWorkflow:
                     output_lines.append(line)
                     
                     # Essayer d'extraire le nombre de paquets de la ligne
-                    # Rechercher des patterns comme "Captured 1234 packets" ou "1234 packets captured"
-                    packet_match = re.search(r'(\d+)\s+(?:packets?|paquets?)', line.lower())
+                    # Rechercher des patterns spécifiques indiquant la progression réelle
+                    # Patterns acceptés: "Captured: 1234", "Paquets capturés: 1234", "Progress: 1234/10000"
+                    packet_match = re.search(r'(?:captured|capturés?|progress)[\s:]+(\d+)', line.lower())
                     if packet_match:
-                        packets_captured = int(packet_match.group(1))
+                        new_count = int(packet_match.group(1))
+                        # Ne mettre à jour que si c'est inférieur au target (évite de capturer le nombre cible)
+                        if new_count <= packet_target:
+                            packets_captured = new_count
                 
                 # Afficher la progression
                 elapsed = int(time.time() - start_time)
