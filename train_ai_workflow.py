@@ -146,6 +146,103 @@ class AITrainingWorkflow:
             self.print_error(f"Erreur inattendue: {e}")
             return False, str(e)
     
+    def run_capture_command(self, cmd, cwd=None, timeout=None, packet_target=10000):
+        """Exécute une commande de capture avec affichage en temps réel des paquets"""
+        try:
+            self.print_info(f"Commande: {' '.join(cmd)}")
+            
+            start_time = time.time()
+            packets_captured = 0
+            
+            # Lancer le processus sans capturer la sortie
+            process = subprocess.Popen(
+                cmd,
+                cwd=cwd or self.root_dir,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,
+                universal_newlines=True
+            )
+            
+            output_lines = []
+            spinner = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
+            idx = 0
+            
+            # Lire la sortie ligne par ligne
+            import re
+            while True:
+                # Vérifier le timeout
+                if timeout and (time.time() - start_time) > timeout:
+                    process.kill()
+                    raise subprocess.TimeoutExpired(cmd, timeout)
+                
+                line = process.stdout.readline()
+                if not line and process.poll() is not None:
+                    break
+                
+                if line:
+                    line = line.strip()
+                    output_lines.append(line)
+                    
+                    # Essayer d'extraire le nombre de paquets de la ligne
+                    # Rechercher des patterns comme "Captured 1234 packets" ou "1234 packets captured"
+                    packet_match = re.search(r'(\d+)\s+(?:packets?|paquets?)', line.lower())
+                    if packet_match:
+                        packets_captured = int(packet_match.group(1))
+                
+                # Afficher la progression
+                elapsed = int(time.time() - start_time)
+                mins, secs = divmod(elapsed, 60)
+                timer_str = f"{mins:02d}:{secs:02d}"
+                
+                # Calculer le pourcentage
+                percentage = min(100, int((packets_captured / packet_target) * 100)) if packet_target > 0 else 0
+                
+                # Barre de progression
+                bar_length = 30
+                filled_length = int(bar_length * percentage / 100)
+                bar = '█' * filled_length + '░' * (bar_length - filled_length)
+                
+                print(
+                    f"\r{Colors.OKCYAN}{spinner[idx]} Capture en cours... "
+                    f"[{timer_str}] {bar} {percentage}% "
+                    f"({packets_captured:,}/{packet_target:,} paquets){Colors.ENDC}",
+                    end='', flush=True
+                )
+                idx = (idx + 1) % len(spinner)
+                time.sleep(0.1)
+            
+            # Effacer la ligne de progression
+            print("\r" + " " * 120 + "\r", end='', flush=True)
+            
+            # Attendre la fin du processus
+            return_code = process.wait()
+            
+            elapsed = time.time() - start_time
+            mins, secs = divmod(int(elapsed), 60)
+            self.print_info(f"Temps d'exécution: {mins}m {secs}s")
+            
+            # Afficher la sortie complète
+            full_output = '\n'.join(output_lines)
+            if full_output:
+                print(full_output)
+            
+            if return_code == 0:
+                return True, full_output
+            else:
+                raise subprocess.CalledProcessError(return_code, cmd, full_output)
+                
+        except subprocess.CalledProcessError as e:
+            self.print_error(f"Erreur lors de l'exécution: {e}")
+            return False, str(e)
+        except subprocess.TimeoutExpired:
+            self.print_error(f"Timeout atteint")
+            return False, "Timeout"
+        except Exception as e:
+            self.print_error(f"Erreur inattendue: {e}")
+            return False, str(e)
+    
     def step1_capture_traffic(self):
         """Étape 1: Capturer le trafic réseau avec confirmation toutes les 10 000 paquets"""
         self.print_step(1, 5, f"Capture du trafic réseau (par lots de 10 000 paquets)")
@@ -197,11 +294,11 @@ class AITrainingWorkflow:
             # Timeout pour un lot: 5 minutes max
             batch_timeout = 300
             
-            success, output = self.run_command(
+            success, output = self.run_capture_command(
                 cmd, 
                 cwd=self.zeus_dir, 
                 timeout=batch_timeout,
-                progress_msg=f"Capture lot #{batch_number} ({packet_batch_size} paquets)"
+                packet_target=packet_batch_size
             )
             
             if not success:
