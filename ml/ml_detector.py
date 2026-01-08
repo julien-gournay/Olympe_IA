@@ -1,15 +1,33 @@
 #!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """
 Détecteur de menaces utilisant le Machine Learning
 Intégration avec le système existant de Celestis_IA
 """
 
 import sys
+import os
 import numpy as np
 import logging
 from pathlib import Path
 from typing import List, Dict, Optional, Any, Tuple
 from datetime import datetime
+
+# Configurer l'encodage UTF-8 pour Windows
+if sys.platform == 'win32':
+    try:
+        # Essayer de configurer UTF-8 (Python 3.7+)
+        if hasattr(sys.stdout, 'reconfigure') and hasattr(sys.stderr, 'reconfigure'):
+            sys.stdout.reconfigure(encoding='utf-8')  # type: ignore[attr-defined]
+            sys.stderr.reconfigure(encoding='utf-8')  # type: ignore[attr-defined]
+        else:
+            # Python < 3.7
+            import codecs
+            sys.stdout = codecs.getwriter('utf-8')(sys.stdout.buffer, 'strict')  # type: ignore[assignment]
+            sys.stderr = codecs.getwriter('utf-8')(sys.stderr.buffer, 'strict')  # type: ignore[assignment]
+    except Exception:
+        # Si la configuration échoue, on utilisera des caractères ASCII
+        pass
 
 # Ajouter le chemin parent
 sys.path.append(str(Path(__file__).parent.parent))
@@ -212,11 +230,11 @@ class MLThreatDetector:
     def _print_alert(self, alert: Dict):
         """Affiche une alerte de manière formatée"""
         severity_icons = {
-            "INFO": "ℹ️",
-            "LOW": "⚪",
-            "MEDIUM": "🟡",
-            "HIGH": "🟠",
-            "CRITICAL": "🔴"
+            "INFO": "[i]",
+            "LOW": "[*]",
+            "MEDIUM": "[!]",
+            "HIGH": "[!!]",
+            "CRITICAL": "[!!!]"
         }
         
         icon = severity_icons.get(alert['severity'], "⚠️")
@@ -245,7 +263,7 @@ class MLThreatDetector:
     def _print_summary(self, alerts: List[Dict]):
         """Affiche un résumé des alertes"""
         print(f"\n{'='*70}")
-        print(f"📊 RÉSUMÉ DE L'ANALYSE ML")
+        print(f"=== RÉSUMÉ DE L'ANALYSE ML ===")
         print(f"{'='*70}")
         
         # Comptage par sévérité
@@ -317,7 +335,7 @@ def main():
     )
     
     if not detector.is_available():
-        print("\n❌ Erreur: Modèle ML non disponible")
+        print("\n[X] Erreur: Modèle ML non disponible")
         print("Entraînez d'abord un modèle avec: python ml/trainer.py --train")
         return
     
@@ -334,9 +352,9 @@ def main():
     
     # Résumé final
     if alerts:
-        print(f"\n✓ Analyse terminée: {len(alerts)} alerte(s) ML détectée(s)")
+        print(f"\n[OK] Analyse terminée: {len(alerts)} alerte(s) ML détectée(s)")
     else:
-        print("\n✓ Analyse terminée: Aucune menace détectée par ML")
+        print("\n[OK] Analyse terminée: Aucune menace détectée par ML")
 
 
 if __name__ == "__main__":

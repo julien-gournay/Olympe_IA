@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """
 Exemple d'intégration ML avec le système Zeus existant
 Montre comment combiner les règles regex et le ML
@@ -7,6 +8,15 @@ Montre comment combiner les règles regex et le ML
 import sys
 from pathlib import Path
 import logging
+
+# Configurer l'encodage UTF-8 pour Windows
+if sys.platform == 'win32':
+    try:
+        if hasattr(sys.stdout, 'reconfigure') and hasattr(sys.stderr, 'reconfigure'):
+            sys.stdout.reconfigure(encoding='utf-8')  # type: ignore[attr-defined]
+            sys.stderr.reconfigure(encoding='utf-8')  # type: ignore[attr-defined]
+    except Exception:
+        pass
 
 # Ajouter les chemins
 sys.path.append(str(Path(__file__).parent.parent))
@@ -145,7 +155,7 @@ class HybridThreatAnalyzer(ThreatAnalyzer):
         ml_count = sum(1 for a in alerts if a.get('detection_method') == 'ml')
         
         print(f"\n{'='*70}")
-        print(f"📊 RÉSUMÉ DÉTECTION HYBRIDE")
+        print(f"=== RÉSUMÉ DÉTECTION HYBRIDE ===")
         print(f"{'='*70}")
         print(f"\n🔧 Alertes par Règles Regex: {regex_count}")
         print(f"🤖 Alertes par ML uniquement: {ml_count}")
@@ -194,7 +204,7 @@ def demo_hybrid_analysis():
     # Analyser
     alerts = analyzer.analyze_pcap(args.file, verbose=True)
     
-    print(f"\n✓ Analyse terminée: {len(alerts)} alerte(s) détectée(s)")
+    print(f"\n[OK] Analyse terminée: {len(alerts)} alerte(s) détectée(s)")
     
     # Sauvegarder dans un rapport
     if alerts:

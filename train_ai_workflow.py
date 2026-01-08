@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """
 Script d'automatisation du workflow complet d'entraînement de l'IA
 Basé sur le QUICKSTART.md
@@ -15,6 +16,22 @@ from pathlib import Path
 from datetime import datetime
 import os
 import threading
+
+# Configurer l'encodage UTF-8 pour Windows
+if sys.platform == 'win32':
+    try:
+        # Essayer de configurer UTF-8 (Python 3.7+)
+        if hasattr(sys.stdout, 'reconfigure') and hasattr(sys.stderr, 'reconfigure'):
+            sys.stdout.reconfigure(encoding='utf-8')  # type: ignore[attr-defined]
+            sys.stderr.reconfigure(encoding='utf-8')  # type: ignore[attr-defined]
+        else:
+            # Python < 3.7
+            import codecs
+            sys.stdout = codecs.getwriter('utf-8')(sys.stdout.buffer, 'strict')  # type: ignore[assignment]
+            sys.stderr = codecs.getwriter('utf-8')(sys.stderr.buffer, 'strict')  # type: ignore[assignment]
+    except Exception:
+        # Si la configuration échoue, les caractères ASCII seront utilisés
+        pass
 
 try:
     from tqdm import tqdm
@@ -56,19 +73,19 @@ class AITrainingWorkflow:
     
     def print_success(self, message):
         """Affiche un message de succès"""
-        print(f"{Colors.OKGREEN}✓ {message}{Colors.ENDC}")
+        print(f"{Colors.OKGREEN}[OK] {message}{Colors.ENDC}")
     
     def print_error(self, message):
         """Affiche un message d'erreur"""
-        print(f"{Colors.FAIL}✗ {message}{Colors.ENDC}")
+        print(f"{Colors.FAIL}[X] {message}{Colors.ENDC}")
     
     def print_info(self, message):
         """Affiche un message d'information"""
-        print(f"{Colors.OKCYAN}ℹ {message}{Colors.ENDC}")
+        print(f"{Colors.OKCYAN}[i] {message}{Colors.ENDC}")
     
     def print_warning(self, message):
         """Affiche un message d'avertissement"""
-        print(f"{Colors.WARNING}⚠ {message}{Colors.ENDC}")
+        print(f"{Colors.WARNING}[!] {message}{Colors.ENDC}")
     
     def _get_next_zeus_version(self) -> str:
         """Détermine le prochain numéro de version Zeus pour le modèle"""
@@ -129,7 +146,7 @@ class AITrainingWorkflow:
         mod_time = datetime.fromtimestamp(capture_path.stat().st_mtime)
         
         print(f"\n{Colors.WARNING}{'='*70}{Colors.ENDC}")
-        print(f"{Colors.BOLD}⚠ Capture existante détectée!{Colors.ENDC}")
+        print(f"{Colors.BOLD}[!] Capture existante détectée!{Colors.ENDC}")
         print(f"  Fichier: {self.pcap_file}")
         print(f"  Taille: {size_mb:.2f} MB")
         print(f"  Date de modification: {mod_time.strftime('%Y-%m-%d %H:%M:%S')}")
@@ -557,9 +574,9 @@ class AITrainingWorkflow:
         seconds = int(elapsed_time % 60)
         
         print(f"\n{Colors.BOLD}{Colors.OKGREEN}")
-        print("╔════════════════════════════════════════════════════════════════════╗")
-        print("║                   ✓ WORKFLOW TERMINÉ AVEC SUCCÈS ✓                ║")
-        print("╚════════════════════════════════════════════════════════════════════╝")
+        print("╭──────────────────────────────────────────────────────────────────────╮")
+        print("│              [OK] WORKFLOW TERMINÉ AVEC SUCCÈS [OK]              │")
+        print("╰──────────────────────────────────────────────────────────────────────╯")
         print(f"{Colors.ENDC}")
         
         self.print_success(f"Temps total d'exécution: {minutes}m {seconds}s")
