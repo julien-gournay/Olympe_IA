@@ -91,9 +91,19 @@ class RandomForestThreatModel(ThreatDetectionModel):
         """Entraîne le Random Forest"""
         
         # Split train/validation
-        X_train, X_val, y_train, y_val = train_test_split(
-            X, y, test_size=validation_split, random_state=42, stratify=y
-        )
+        # Vérifier si stratify est possible (au moins 2 échantillons par classe)
+        unique_classes, counts = np.unique(y, return_counts=True)
+        use_stratify = all(count >= 2 for count in counts) and len(unique_classes) > 1
+        
+        if use_stratify:
+            X_train, X_val, y_train, y_val = train_test_split(
+                X, y, test_size=validation_split, random_state=42, stratify=y
+            )
+        else:
+            self.logger.warning("Stratification désactivée - classes insuffisantes ou déséquilibrées")
+            X_train, X_val, y_train, y_val = train_test_split(
+                X, y, test_size=validation_split, random_state=42
+            )
         
         self.logger.info(f"Entraînement sur {len(X_train)} échantillons, "
                         f"validation sur {len(X_val)} échantillons")
@@ -108,7 +118,15 @@ class RandomForestThreatModel(ThreatDetectionModel):
         
         # Évaluation
         y_pred = self.model.predict(X_val_scaled)
-        y_pred_proba = self.model.predict_proba(X_val_scaled)[:, 1]
+        y_pred_proba_all = self.model.predict_proba(X_val_scaled)
+        
+        # Gérer le cas où il n'y a qu'une seule classe
+        if y_pred_proba_all.shape[1] == 1:
+            # Une seule classe détectée - utiliser cette probabilité
+            y_pred_proba = y_pred_proba_all[:, 0]
+        else:
+            # Deux classes - utiliser la probabilité de la classe positive (1)
+            y_pred_proba = y_pred_proba_all[:, 1]
         
         # Métriques
         metrics = {
@@ -122,7 +140,7 @@ class RandomForestThreatModel(ThreatDetectionModel):
         }
         
         # ROC AUC si on a les deux classes
-        if len(np.unique(y_val)) > 1:
+        if len(np.unique(y_val)) > 1 and y_pred_proba_all.shape[1] > 1:
             metrics['roc_auc'] = roc_auc_score(y_val, y_pred_proba)
         
         # Feature importance
@@ -391,9 +409,19 @@ class NeuralNetworkThreatModel(ThreatDetectionModel):
         assert tf is not None
         
         # Split train/validation
-        X_train, X_val, y_train, y_val = train_test_split(
-            X, y, test_size=validation_split, random_state=42, stratify=y
-        )
+        # Vérifier si stratify est possible
+        unique_classes, counts = np.unique(y, return_counts=True)
+        use_stratify = all(count >= 2 for count in counts) and len(unique_classes) > 1
+        
+        if use_stratify:
+            X_train, X_val, y_train, y_val = train_test_split(
+                X, y, test_size=validation_split, random_state=42, stratify=y
+            )
+        else:
+            self.logger.warning("Stratification désactivée - classes insuffisantes ou déséquilibrées")
+            X_train, X_val, y_train, y_val = train_test_split(
+                X, y, test_size=validation_split, random_state=42
+            )
         
         self.logger.info(f"Entraînement sur {len(X_train)} échantillons, "
                         f"validation sur {len(X_val)} échantillons")
