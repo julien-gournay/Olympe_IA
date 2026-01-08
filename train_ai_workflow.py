@@ -319,7 +319,8 @@ class AITrainingWorkflow:
             "capture_reseau.py",
             "-i", self.interface,
             "-c", "5000",
-            "-o", self.pcap_file
+            "-o", "captures",
+            "-n", self.pcap_file
         ]
         
         success, output = self.run_capture_command(
