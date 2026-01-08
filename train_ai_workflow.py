@@ -172,11 +172,6 @@ class AITrainingWorkflow:
             # Lire la sortie ligne par ligne
             import re
             while True:
-                # Vérifier le timeout
-                if timeout and (time.time() - start_time) > timeout:
-                    process.kill()
-                    raise subprocess.TimeoutExpired(cmd, timeout)
-                
                 if process.stdout is None:
                     break
                 line = process.stdout.readline()
@@ -250,8 +245,8 @@ class AITrainingWorkflow:
             return False, str(e)
     
     def step1_capture_traffic(self):
-        """Étape 1: Capturer le trafic réseau avec confirmation toutes les 10 000 paquets"""
-        self.print_step(1, 5, f"Capture du trafic réseau (par lots de 10 000 paquets)")
+        """Étape 1: Capturer le trafic réseau avec confirmation toutes les 5 000 paquets"""
+        self.print_step(1, 5, f"Capture du trafic réseau (par lots de 5 000 paquets)")
         
         capture_path = self.zeus_dir / "captures" / self.pcap_file
         
@@ -263,10 +258,10 @@ class AITrainingWorkflow:
         self.print_info(f"Fichier de sortie: {capture_path}")
         
         self.print_warning(f"La capture va démarrer. Générez du trafic réseau pour améliorer l'entraînement.")
-        self.print_info(f"Vous serez invité à continuer ou arrêter toutes les 10 000 paquets")
+        self.print_info(f"Vous serez invité à continuer ou arrêter toutes les 5 000 paquets")
         
-        # Capturer par lots de 10 000 paquets
-        packet_batch_size = 10000
+        # Capturer par lots de 5 000 paquets
+        packet_batch_size = 5000
         total_packets_captured = 0
         batch_number = 0
         temp_files = []
@@ -297,13 +292,10 @@ class AITrainingWorkflow:
                 "-o", f"captures/{temp_pcap}"
             ]
             
-            # Timeout pour un lot: 5 minutes max
-            batch_timeout = 300
-            
             success, output = self.run_capture_command(
                 cmd, 
                 cwd=self.zeus_dir, 
-                timeout=batch_timeout,
+                timeout=None,
                 packet_target=packet_batch_size
             )
             
@@ -403,7 +395,7 @@ class AITrainingWorkflow:
         success, output = self.run_command(
             cmd, 
             cwd=self.zeus_dir, 
-            timeout=600,
+            timeout=None,
             progress_msg="Ingestion et analyse YARA"
         )
         
@@ -428,7 +420,7 @@ class AITrainingWorkflow:
         success, output = self.run_command(
             cmd, 
             cwd=self.ml_dir, 
-            timeout=300,
+            timeout=None,
             progress_msg="Construction du dataset ML"
         )
         
@@ -463,7 +455,7 @@ class AITrainingWorkflow:
         success, output = self.run_command(
             cmd, 
             cwd=self.ml_dir, 
-            timeout=600,
+            timeout=None,
             progress_msg="Entraînement du modèle Random Forest"
         )
         
@@ -497,7 +489,7 @@ class AITrainingWorkflow:
         success, output = self.run_command(
             cmd, 
             cwd=self.ml_dir, 
-            timeout=300,
+            timeout=None,
             progress_msg="Test du modèle"
         )
         
