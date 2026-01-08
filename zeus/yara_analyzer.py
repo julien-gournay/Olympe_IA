@@ -296,8 +296,27 @@ class YaraAnalyzer:
             True si chargement réussi, False sinon
         """
         try:
-            self.rules = yara.compile(filepath=rules_path)
-            self.logger.info(f"Règles YARA chargées: {rules_path}")
+            with open(rules_path, 'r', encoding='utf-8') as f:
+                rules_data = yaml.safe_load(f)
+            
+            self.rules = []
+            if rules_data and 'rules' in rules_data:
+                for rule in rules_data['rules']:
+                    # Compiler les patterns regex
+                    compiled_patterns = []
+                    for pattern in rule.get('patterns', []):
+                        flags = 0 if rule.get('case_sensitive', False) else re.IGNORECASE
+                        compiled_patterns.append(re.compile(pattern, flags))
+                    
+                    self.rules.append({
+                        'name': rule.get('name', 'Unknown'),
+                        'description': rule.get('description', ''),
+                        'severity': rule.get('severity', self.SEVERITY_MEDIUM),
+                        'patterns': compiled_patterns,
+                        'tags': rule.get('tags', [])
+                    })
+            
+            self.logger.info(f"Règles YARA chargées: {rules_path} ({len(self.rules)} règles)")
             return True
         except Exception as e:
             self.logger.error(f"Erreur lors du chargement des règles YARA: {e}")
@@ -322,56 +341,57 @@ class YaraAnalyzer:
         try:
             # Extraire le payload du paquet
             payload = bytes(packet)
+            payload_str = payload.decode('utf-8', errors='replace')
 
-            # Analyser avec YARA
-            matches = self.rules.match(data=payload)
+            # Extraire les informations du paquet
+            src_ip = packet[IP].src if packet.haslayer(IP) else None
+            dst_ip = packet[IP].dst if packet.haslayer(IP) else None
+            src_port = None
+            dst_port = None
+            protocol = "OTHER"
 
-            for match in matches:
-                # Extraire les métadonnées
-                severity = match.meta.get('severity', self.SEVERITY_MEDIUM)
-                description = match.meta.get('description', 'Aucune description')
+            if packet.haslayer(TCP):
+                protocol = "TCP"
+                src_port = packet[TCP].sport
+                dst_port = packet[TCP].dport
+            elif packet.haslayer(UDP):
+                protocol = "UDP"
+                src_port = packet[UDP].sport
+                dst_port = packet[UDP].dport
 
-                # Extraire les informations du paquet
-                src_ip = packet[IP].src if packet.haslayer(IP) else None
-                dst_ip = packet[IP].dst if packet.haslayer(IP) else None
-                src_port = None
-                dst_port = None
-                protocol = "OTHER"
-
-                if packet.haslayer(TCP):
-                    protocol = "TCP"
-                    src_port = packet[TCP].sport
-                    dst_port = packet[TCP].dport
-                elif packet.haslayer(UDP):
-                    protocol = "UDP"
-                    src_port = packet[UDP].sport
-                    dst_port = packet[UDP].dport
-
-                # Extraire les chaînes correspondantes
+            # Analyser avec les règles regex
+            for rule in self.rules:
                 matched_strings = []
-                for string in match.strings:
-                    matched_strings.append({
-                        'identifier': string.identifier,
-                        'instances': [(s[0], s[2].decode('utf-8', errors='replace')) for s in string.instances]
-                    })
+                
+                # Tester chaque pattern de la règle
+                for pattern in rule['patterns']:
+                    match = pattern.search(payload_str)
+                    if match:
+                        matched_strings.append({
+                            'pattern': pattern.pattern,
+                            'match': match.group(0),
+                            'position': match.start()
+                        })
+                
+                # Si au moins un pattern correspond, créer une alerte
+                if matched_strings:
+                    alert = {
+                        'packet_number': packet_number,
+                        'timestamp': datetime.fromtimestamp(float(packet.time)).isoformat(),
+                        'rule_name': rule['name'],
+                        'rule_tags': ','.join(rule['tags']),
+                        'severity': rule['severity'],
+                        'src_ip': src_ip,
+                        'dst_ip': dst_ip,
+                        'src_port': src_port,
+                        'dst_port': dst_port,
+                        'protocol': protocol,
+                        'matched_strings': str(matched_strings),
+                        'description': rule['description'],
+                        'detection_time': datetime.now().isoformat()
+                    }
 
-                alert = {
-                    'packet_number': packet_number,
-                    'timestamp': datetime.fromtimestamp(float(packet.time)).isoformat(),
-                    'rule_name': match.rule,
-                    'rule_tags': ','.join(match.tags),
-                    'severity': severity,
-                    'src_ip': src_ip,
-                    'dst_ip': dst_ip,
-                    'src_port': src_port,
-                    'dst_port': dst_port,
-                    'protocol': protocol,
-                    'matched_strings': str(matched_strings),
-                    'description': description,
-                    'detection_time': datetime.now().isoformat()
-                }
-
-                alerts.append(alert)
+                    alerts.append(alert)
 
         except Exception as e:
             self.logger.warning(f"Erreur lors de l'analyse YARA du paquet {packet_number}: {e}")
