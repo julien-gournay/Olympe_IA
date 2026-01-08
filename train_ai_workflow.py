@@ -44,8 +44,9 @@ class AITrainingWorkflow:
         self.interface = network_interface
         self.duration_minutes = duration_minutes
         self.timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        self.pcap_file = f"training_data_{self.timestamp}.pcap"
+        self.pcap_file = "training_ai.pcap"
         self.db_path = self.zeus_dir / "pcap_database.db"
+        self.use_existing_capture = False
         
     def print_step(self, step_num, total_steps, message):
         """Affiche un message de progression"""
@@ -87,6 +88,50 @@ class AITrainingWorkflow:
         
         # Effacer la ligne du spinner
         print("\r" + " " * 80 + "\r", end='', flush=True)
+    
+    def check_existing_capture(self):
+        """Vérifie si une capture existe déjà et demande à l'utilisateur quoi faire"""
+        capture_path = self.zeus_dir / "captures" / self.pcap_file
+        
+        if not capture_path.exists():
+            return True  # Pas de fichier existant, on continue normalement
+        
+        size_mb = capture_path.stat().st_size / (1024 * 1024)
+        mod_time = datetime.fromtimestamp(capture_path.stat().st_mtime)
+        
+        print(f"\n{Colors.WARNING}{'='*70}{Colors.ENDC}")
+        print(f"{Colors.BOLD}⚠ Capture existante détectée!{Colors.ENDC}")
+        print(f"  Fichier: {self.pcap_file}")
+        print(f"  Taille: {size_mb:.2f} MB")
+        print(f"  Date de modification: {mod_time.strftime('%Y-%m-%d %H:%M:%S')}")
+        print(f"{Colors.WARNING}{'='*70}{Colors.ENDC}\n")
+        
+        print(f"{Colors.OKCYAN}Que voulez-vous faire?{Colors.ENDC}")
+        print(f"  1. {Colors.OKGREEN}Utiliser la capture existante{Colors.ENDC} (sauter l'étape de capture)")
+        print(f"  2. {Colors.WARNING}Supprimer et créer une nouvelle capture{Colors.ENDC}")
+        print(f"  3. {Colors.FAIL}Annuler{Colors.ENDC}\n")
+        
+        while True:
+            try:
+                choice = input(f"{Colors.OKCYAN}Votre choix [1/2/3]: {Colors.ENDC}").strip()
+                
+                if choice == '1':
+                    self.print_success("Utilisation de la capture existante")
+                    self.use_existing_capture = True
+                    return True
+                elif choice == '2':
+                    self.print_warning("Suppression de la capture existante...")
+                    capture_path.unlink()
+                    self.print_success("Capture supprimée")
+                    return True
+                elif choice == '3':
+                    self.print_info("Workflow annulé par l'utilisateur")
+                    return False
+                else:
+                    print(f"{Colors.FAIL}Choix invalide. Veuillez entrer 1, 2 ou 3.{Colors.ENDC}")
+            except (KeyboardInterrupt, EOFError):
+                print(f"\n{Colors.WARNING}Workflow annulé{Colors.ENDC}")
+                return False
     
     def run_command(self, cmd, cwd=None, timeout=None, progress_msg="Exécution"):
         """Exécute une commande et retourne le résultat avec timer"""
@@ -246,9 +291,16 @@ class AITrainingWorkflow:
     
     def step1_capture_traffic(self):
         """Étape 1: Capturer le trafic réseau avec confirmation toutes les 5 000 paquets"""
-        self.print_step(1, 5, f"Capture du trafic réseau (par lots de 5 000 paquets)")
-        
         capture_path = self.zeus_dir / "captures" / self.pcap_file
+        
+        # Si on utilise une capture existante, on saute cette étape
+        if self.use_existing_capture:
+            self.print_step(1, 5, f"Utilisation de la capture existante")
+            size_mb = capture_path.stat().st_size / (1024 * 1024)
+            self.print_success(f"Fichier existant utilisé: {self.pcap_file} ({size_mb:.2f} MB)")
+            return True
+        
+        self.print_step(1, 5, f"Capture du trafic réseau (par lots de 5 000 paquets)")
         
         # Créer le dossier captures s'il n'existe pas
         capture_path.parent.mkdir(parents=True, exist_ok=True)
@@ -514,6 +566,10 @@ class AITrainingWorkflow:
         self.print_info(f"Base de données: {self.db_path}")
         
         start_time = time.time()
+        
+        # Vérifier si une capture existe déjà et demander à l'utilisateur
+        if not self.check_existing_capture():
+            return False
         
         # Vérifier que les dossiers existent
         if not self.zeus_dir.exists():
