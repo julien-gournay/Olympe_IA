@@ -13,3 +13,6 @@ __pycache__/
 # Fichiers IDEs
 .vscode/
 .idea/
+
+# Fichiers report
+*_report.txt
