@@ -197,7 +197,7 @@ class ThreatDatasetBuilder:
         raise NotImplementedError("Feature extraction par flux à implémenter")
 
 
-def get_next_zeus_version(model_dir: str = "ml/models") -> str:
+def get_next_zeus_version(model_dir: str = "models") -> str:
     """
     Détermine le prochain numéro de version Zeus pour le modèle
     
@@ -239,7 +239,7 @@ def get_next_zeus_version(model_dir: str = "ml/models") -> str:
 class ContinuousLearningSystem:
     """Système d'apprentissage continu qui s'améliore avec le temps"""
     
-    def __init__(self, model_dir: str = "ml/models", 
+    def __init__(self, model_dir: str = "models", 
                  db_path: str = "pcap_database.db",
                  feedback_threshold: int = 10):
         """

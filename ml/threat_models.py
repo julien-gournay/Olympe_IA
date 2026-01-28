@@ -29,7 +29,7 @@ except ImportError:
 class ThreatDetectionModel:
     """Modèle de base pour la détection de menaces"""
     
-    def __init__(self, model_dir: str = "ml/models"):
+    def __init__(self, model_dir: str = "models"):
         self.model_dir = Path(model_dir)
         self.model_dir.mkdir(parents=True, exist_ok=True)
         
@@ -75,7 +75,7 @@ class ThreatDetectionModel:
 class RandomForestThreatModel(ThreatDetectionModel):
     """Modèle Random Forest pour la détection de menaces"""
     
-    def __init__(self, model_dir: str = "ml/models", 
+    def __init__(self, model_dir: str = "models", 
                  n_estimators: int = 100, max_depth: int = 20):
         super().__init__(model_dir)
         self.model = RandomForestClassifier(
@@ -239,7 +239,7 @@ class RandomForestThreatModel(ThreatDetectionModel):
 class AnomalyDetectionModel(ThreatDetectionModel):
     """Modèle d'apprentissage non supervisé (Isolation Forest)"""
     
-    def __init__(self, model_dir: str = "ml/models", 
+    def __init__(self, model_dir: str = "models", 
                  contamination: float = 0.1):
         super().__init__(model_dir)
         self.model = IsolationForest(
@@ -365,7 +365,7 @@ class AnomalyDetectionModel(ThreatDetectionModel):
 class NeuralNetworkThreatModel(ThreatDetectionModel):
     """Modèle de réseau de neurones profond"""
     
-    def __init__(self, model_dir: str = "ml/models", 
+    def __init__(self, model_dir: str = "models", 
                  input_dim: int = 85, hidden_layers: List[int] = [128, 64, 32]):
         super().__init__(model_dir)
         

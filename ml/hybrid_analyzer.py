@@ -37,7 +37,7 @@ class HybridThreatAnalyzer(ThreatAnalyzer):
     def __init__(self, rules_path: str = "config/threat_rules.yaml",
                  db_path: str = "pcap_database.db",
                  log_dir: str = "logs",
-                 ml_model_path: str = "ml/models/threat_detector",
+                 ml_model_path: str = "models/threat_detector",
                  ml_model_type: str = "random_forest",
                  ml_threshold: float = 0.7,
                  enable_ml: bool = True):
@@ -179,7 +179,7 @@ def demo_hybrid_analysis():
     parser = argparse.ArgumentParser(description="Analyse hybride (Règles + ML)")
     parser.add_argument('-f', '--file', required=True,
                        help='Fichier PCAP à analyser')
-    parser.add_argument('--ml-model', default='ml/models/threat_detector',
+    parser.add_argument('--ml-model', default='models/threat_detector',
                        help='Chemin vers le modèle ML')
     parser.add_argument('--disable-ml', action='store_true',
                        help='Désactiver le ML (règles uniquement)')

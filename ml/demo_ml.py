@@ -112,7 +112,7 @@ def demo_training():
         # Sauvegarder
         print("\n[*] Sauvegarde du modèle...")
         model.save("demo_model")
-        print("  [OK] Modèle sauvegardé: ml/models/demo_model.pkl")
+        print("  [OK] Modèle sauvegardé: models/demo_model.pkl")
         
         # Top features
         print("\n[*] Top 10 Features importantes:")
@@ -132,9 +132,9 @@ def demo_detection():
     from ml.ml_detector import MLThreatDetector
     
     # Vérifier si on a un modèle
-    model_path = Path("ml/models/demo_model.pkl")
+    model_path = Path("models/demo_model.pkl")
     if not model_path.exists():
-        print("\n[X] Modèle non trouvé: ml/models/demo_model.pkl")
+        print("\n[X] Modèle non trouvé: models/demo_model.pkl")
         print("   Lancez d'abord: python demo_ml.py --train")
         return
     
@@ -152,7 +152,7 @@ def demo_detection():
     # Créer le détecteur
     print("\n[*] Initialisation du détecteur ML...")
     detector = MLThreatDetector(
-        model_path="ml/models/demo_model",
+        model_path="models/demo_model",
         model_type="random_forest",
         confidence_threshold=0.7
     )

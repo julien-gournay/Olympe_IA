@@ -40,7 +40,7 @@ from ml.threat_models import RandomForestThreatModel, AnomalyDetectionModel
 class MLThreatDetector:
     """Détecteur de menaces basé sur ML - Intégration avec Zeus"""
     
-    def __init__(self, model_path: str = "ml/models/threat_detector",
+    def __init__(self, model_path: str = "models/threat_detector",
                  model_type: str = "random_forest",
                  confidence_threshold: float = 0.7):
         """
@@ -315,7 +315,7 @@ def main():
     parser = argparse.ArgumentParser(description="Détection de menaces avec ML")
     parser.add_argument('-f', '--file', required=True,
                        help='Fichier PCAP à analyser')
-    parser.add_argument('--model', default='ml/models/threat_detector',
+    parser.add_argument('--model', default='models/threat_detector',
                        help='Chemin vers le modèle')
     parser.add_argument('--model-type', default='random_forest',
                        choices=['random_forest', 'anomaly'],
