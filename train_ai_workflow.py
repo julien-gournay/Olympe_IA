@@ -575,7 +575,7 @@ class AITrainingWorkflow:
         
         print(f"\n{Colors.BOLD}{Colors.OKGREEN}")
         print("╭──────────────────────────────────────────────────────────────────────╮")
-        print("│              [OK] WORKFLOW TERMINÉ AVEC SUCCÈS [OK]              │")
+        print("│              [OK] WORKFLOW TERMINÉ AVEC SUCCÈS [OK]                  │")
         print("╰──────────────────────────────────────────────────────────────────────╯")
         print(f"{Colors.ENDC}")
         
