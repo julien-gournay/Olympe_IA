@@ -230,11 +230,11 @@ class ThreatDetectionModel:
                     num_pcap_files = cursor.fetchone()[0]
                     report_lines.append(f"Nombre de fichiers PCAP analysés: {num_pcap_files}")
                     
-                    # Détails des fichiers PCAP
+                    # Détails des fichiers PCAP (uniquement ceux avec des alertes)
                     cursor.execute("""
                         SELECT p.file_path, COUNT(t.id) as alert_count
                         FROM pcap_files p
-                        LEFT JOIN threat_alerts t ON p.id = t.pcap_file_id
+                        INNER JOIN threat_alerts t ON p.id = t.pcap_file_id
                         GROUP BY p.id, p.file_path
                         ORDER BY alert_count DESC
                     """)
