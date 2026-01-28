@@ -591,9 +591,13 @@ class AITrainingWorkflow:
         if model_name:
             self.print_success(f"Modèle entraîné: {model_name}")
             model_path = self.ml_dir / "models" / f"{model_name}.pkl"
+            report_path = self.ml_dir / "models" / f"{model_name}_report.txt"
             if model_path.exists():
                 model_size_kb = model_path.stat().st_size / 1024
                 self.print_success(f"Emplacement modèle: {model_path} ({model_size_kb:.2f} KB)")
+            if report_path.exists():
+                report_size_kb = report_path.stat().st_size / 1024
+                self.print_success(f"Rapport détaillé: {report_path} ({report_size_kb:.2f} KB)")
         
         print(f"\n{Colors.OKCYAN}Prochaines étapes:{Colors.ENDC}")
         print(f"  1. Tester le modèle: cd ml && python ml_detector.py -f ../zeus/{self.pcap_file} --model models/{model_name}")

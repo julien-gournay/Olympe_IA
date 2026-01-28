@@ -8,6 +8,7 @@ Celestis_IA - Module ML
 import numpy as np
 import pickle
 import json
+import sqlite3
 from pathlib import Path
 from datetime import datetime
 from typing import Dict, List, Tuple, Optional, Any
@@ -29,7 +30,7 @@ except ImportError:
 class ThreatDetectionModel:
     """Modèle de base pour la détection de menaces"""
     
-    def __init__(self, model_dir: str = "models"):
+    def __init__(self, model_dir: str = "models", db_path: Optional[str] = None):
         self.model_dir = Path(model_dir)
         self.model_dir.mkdir(parents=True, exist_ok=True)
         
@@ -37,6 +38,7 @@ class ThreatDetectionModel:
         self.scaler = StandardScaler()
         self.feature_importance = None
         self.training_history = []
+        self.db_path = db_path
         
         self.logger = logging.getLogger(__name__)
         
@@ -70,14 +72,215 @@ class ThreatDetectionModel:
     def load(self, name: str):
         """Charge le modèle"""
         raise NotImplementedError
+    
+    def _generate_text_report(self, name: str) -> str:
+        """Génère un rapport texte détaillé sur le modèle"""
+        report_lines = []
+        report_lines.append("="*70)
+        report_lines.append(f"  RAPPORT DU MODÈLE: {name}")
+        report_lines.append("="*70)
+        report_lines.append("")
+        report_lines.append(f"Date de génération: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        report_lines.append("")
+        
+        # Informations sur le modèle
+        report_lines.append("-" * 70)
+        report_lines.append("1. INFORMATIONS SUR LE MODÈLE")
+        report_lines.append("-" * 70)
+        
+        if hasattr(self, 'model') and self.model is not None:
+            model_type = type(self.model).__name__
+            report_lines.append(f"Type de modèle: {model_type}")
+            
+            if isinstance(self.model, RandomForestClassifier):
+                report_lines.append(f"Nombre d'arbres: {self.model.n_estimators}")
+                report_lines.append(f"Profondeur maximale: {self.model.max_depth}")
+            elif isinstance(self.model, IsolationForest):
+                report_lines.append(f"Contamination: {self.model._contamination}")
+        
+        report_lines.append("")
+        
+        # Métriques d'entraînement
+        if self.training_history:
+            latest = self.training_history[-1]
+            report_lines.append("-" * 70)
+            report_lines.append("2. MÉTRIQUES D'ENTRAÎNEMENT")
+            report_lines.append("-" * 70)
+            report_lines.append(f"Échantillons d'entraînement: {latest.get('train_samples', 'N/A')}")
+            report_lines.append(f"Échantillons de validation: {latest.get('val_samples', 'N/A')}")
+            
+            train_acc = latest.get('train_accuracy', latest.get('final_train_accuracy'))
+            val_acc = latest.get('val_accuracy', latest.get('final_val_accuracy'))
+            
+            if train_acc is not None:
+                report_lines.append(f"Précision (entraînement): {train_acc:.4f} ({train_acc*100:.2f}%)")
+            if val_acc is not None:
+                report_lines.append(f"Précision (validation): {val_acc:.4f} ({val_acc*100:.2f}%)")
+            
+            if 'roc_auc' in latest:
+                report_lines.append(f"ROC AUC Score: {latest['roc_auc']:.4f}")
+            
+            report_lines.append("")
+            
+            # Rapport de classification
+            if 'classification_report' in latest:
+                report_lines.append("Rapport de classification détaillé:")
+                report_lines.append("")
+                clf_report = latest['classification_report']
+                
+                if '0' in clf_report:
+                    normal = clf_report['0']
+                    report_lines.append(f"  Classe 0 (Normal):")
+                    report_lines.append(f"    Précision: {normal.get('precision', 0):.4f}")
+                    report_lines.append(f"    Rappel: {normal.get('recall', 0):.4f}")
+                    report_lines.append(f"    F1-Score: {normal.get('f1-score', 0):.4f}")
+                    report_lines.append(f"    Support: {normal.get('support', 0)}")
+                    report_lines.append("")
+                
+                if '1' in clf_report:
+                    malicious = clf_report['1']
+                    report_lines.append(f"  Classe 1 (Malveillant):")
+                    report_lines.append(f"    Précision: {malicious.get('precision', 0):.4f}")
+                    report_lines.append(f"    Rappel: {malicious.get('recall', 0):.4f}")
+                    report_lines.append(f"    F1-Score: {malicious.get('f1-score', 0):.4f}")
+                    report_lines.append(f"    Support: {malicious.get('support', 0)}")
+                    report_lines.append("")
+            
+            # Matrice de confusion
+            if 'confusion_matrix' in latest:
+                report_lines.append("Matrice de confusion:")
+                cm = latest['confusion_matrix']
+                if len(cm) == 2 and len(cm[0]) == 2:
+                    report_lines.append(f"  Vrais Négatifs (TN): {cm[0][0]}")
+                    report_lines.append(f"  Faux Positifs (FP): {cm[0][1]}")
+                    report_lines.append(f"  Faux Négatifs (FN): {cm[1][0]}")
+                    report_lines.append(f"  Vrais Positifs (TP): {cm[1][1]}")
+                report_lines.append("")
+        
+        # Features importantes
+        if self.feature_importance is not None:
+            report_lines.append("-" * 70)
+            report_lines.append("3. IMPORTANCE DES CARACTÉRISTIQUES (Top 15)")
+            report_lines.append("-" * 70)
+            top_features = self._get_top_features(15)
+            for idx, (feat_idx, importance) in enumerate(top_features, 1):
+                report_lines.append(f"  {idx:2d}. Feature #{feat_idx:2d}: {importance:.6f} ({importance*100:.3f}%)")
+            report_lines.append("")
+        
+        # Informations sur les menaces depuis la base de données
+        if self.db_path and Path(self.db_path).exists():
+            report_lines.append("-" * 70)
+            report_lines.append("4. MENACES DÉTECTÉES DANS LES DONNÉES D'ENTRAÎNEMENT")
+            report_lines.append("-" * 70)
+            
+            try:
+                with sqlite3.connect(self.db_path) as conn:
+                    cursor = conn.cursor()
+                    
+                    # Statistiques globales
+                    cursor.execute("SELECT COUNT(*) FROM threat_alerts")
+                    total_alerts = cursor.fetchone()[0]
+                    report_lines.append(f"Total d'alertes: {total_alerts}")
+                    report_lines.append("")
+                    
+                    # Alertes par sévérité
+                    cursor.execute("""
+                        SELECT severity, COUNT(*) as count 
+                        FROM threat_alerts 
+                        GROUP BY severity 
+                        ORDER BY 
+                            CASE severity
+                                WHEN 'CRITICAL' THEN 1
+                                WHEN 'HIGH' THEN 2
+                                WHEN 'MEDIUM' THEN 3
+                                WHEN 'LOW' THEN 4
+                                ELSE 5
+                            END
+                    """)
+                    severity_stats = cursor.fetchall()
+                    
+                    if severity_stats:
+                        report_lines.append("Alertes par sévérité:")
+                        for severity, count in severity_stats:
+                            percentage = (count / total_alerts * 100) if total_alerts > 0 else 0
+                            report_lines.append(f"  {severity:10s}: {count:6d} ({percentage:5.2f}%)")
+                        report_lines.append("")
+                    
+                    # Top 10 des règles déclenchées
+                    cursor.execute("""
+                        SELECT rule_name, severity, COUNT(*) as count 
+                        FROM threat_alerts 
+                        GROUP BY rule_name, severity 
+                        ORDER BY count DESC 
+                        LIMIT 10
+                    """)
+                    top_rules = cursor.fetchall()
+                    
+                    if top_rules:
+                        report_lines.append("Top 10 des règles YARA/Threat déclenchées:")
+                        for idx, (rule_name, severity, count) in enumerate(top_rules, 1):
+                            report_lines.append(f"  {idx:2d}. {rule_name:30s} [{severity:8s}] - {count:5d} fois")
+                        report_lines.append("")
+                    
+                    # Informations sur les fichiers PCAP
+                    cursor.execute("""
+                        SELECT COUNT(DISTINCT pcap_file_id) 
+                        FROM threat_alerts
+                    """)
+                    num_pcap_files = cursor.fetchone()[0]
+                    report_lines.append(f"Nombre de fichiers PCAP analysés: {num_pcap_files}")
+                    
+                    # Détails des fichiers PCAP
+                    cursor.execute("""
+                        SELECT p.file_path, COUNT(t.id) as alert_count
+                        FROM pcap_files p
+                        LEFT JOIN threat_alerts t ON p.id = t.pcap_file_id
+                        GROUP BY p.id, p.file_path
+                        ORDER BY alert_count DESC
+                    """)
+                    pcap_details = cursor.fetchall()
+                    
+                    if pcap_details:
+                        report_lines.append("")
+                        report_lines.append("Détails des fichiers PCAP:")
+                        for pcap_path, alert_count in pcap_details:
+                            pcap_name = Path(pcap_path).name
+                            report_lines.append(f"  - {pcap_name}: {alert_count} alertes")
+                    
+            except Exception as e:
+                report_lines.append(f"Erreur lors de la récupération des menaces: {e}")
+            
+            report_lines.append("")
+        
+        # Historique d'entraînement
+        if len(self.training_history) > 1:
+            report_lines.append("-" * 70)
+            report_lines.append("5. HISTORIQUE D'ENTRAÎNEMENT")
+            report_lines.append("-" * 70)
+            for idx, history in enumerate(self.training_history, 1):
+                timestamp = history.get('timestamp', 'N/A')
+                train_samples = history.get('train_samples', 'N/A')
+                val_acc = history.get('val_accuracy', history.get('final_val_accuracy', 'N/A'))
+                report_lines.append(f"  Run #{idx} - {timestamp}")
+                report_lines.append(f"    Échantillons: {train_samples}")
+                if isinstance(val_acc, float):
+                    report_lines.append(f"    Précision validation: {val_acc:.4f}")
+                report_lines.append("")
+        
+        report_lines.append("="*70)
+        report_lines.append("FIN DU RAPPORT")
+        report_lines.append("="*70)
+        
+        return "\n".join(report_lines)
 
 
 class RandomForestThreatModel(ThreatDetectionModel):
     """Modèle Random Forest pour la détection de menaces"""
     
     def __init__(self, model_dir: str = "models", 
-                 n_estimators: int = 100, max_depth: int = 20):
-        super().__init__(model_dir)
+                 n_estimators: int = 100, max_depth: int = 20,
+                 db_path: Optional[str] = None):
+        super().__init__(model_dir, db_path)
         self.model = RandomForestClassifier(
             n_estimators=n_estimators,
             max_depth=max_depth,
@@ -177,6 +380,7 @@ class RandomForestThreatModel(ThreatDetectionModel):
         model_path = self.model_dir / f"{name}.pkl"
         scaler_path = self.model_dir / f"{name}_scaler.pkl"
         metadata_path = self.model_dir / f"{name}_metadata.json"
+        report_path = self.model_dir / f"{name}_report.txt"
         
         # Sauvegarder le modèle
         with open(model_path, 'wb') as f:
@@ -197,7 +401,13 @@ class RandomForestThreatModel(ThreatDetectionModel):
         with open(metadata_path, 'w') as f:
             json.dump(metadata, f, indent=2)
         
+        # Générer et sauvegarder le rapport texte
+        report_text = self._generate_text_report(name)
+        with open(report_path, 'w', encoding='utf-8') as f:
+            f.write(report_text)
+        
         self.logger.info(f"Modèle sauvegardé: {model_path}")
+        self.logger.info(f"Rapport généré: {report_path}")
     
     def load(self, name: str = "random_forest_model"):
         """Charge le modèle"""
@@ -240,8 +450,9 @@ class AnomalyDetectionModel(ThreatDetectionModel):
     """Modèle d'apprentissage non supervisé (Isolation Forest)"""
     
     def __init__(self, model_dir: str = "models", 
-                 contamination: float = 0.1):
-        super().__init__(model_dir)
+                 contamination: float = 0.1,
+                 db_path: Optional[str] = None):
+        super().__init__(model_dir, db_path)
         self.model = IsolationForest(
             contamination=contamination,
             random_state=42,
@@ -327,6 +538,7 @@ class AnomalyDetectionModel(ThreatDetectionModel):
         model_path = self.model_dir / f"{name}.pkl"
         scaler_path = self.model_dir / f"{name}_scaler.pkl"
         metadata_path = self.model_dir / f"{name}_metadata.json"
+        report_path = self.model_dir / f"{name}_report.txt"
         
         with open(model_path, 'wb') as f:
             pickle.dump(self.model, f)
@@ -343,7 +555,13 @@ class AnomalyDetectionModel(ThreatDetectionModel):
         with open(metadata_path, 'w') as f:
             json.dump(metadata, f, indent=2)
         
+        # Générer et sauvegarder le rapport texte
+        report_text = self._generate_text_report(name)
+        with open(report_path, 'w', encoding='utf-8') as f:
+            f.write(report_text)
+        
         self.logger.info(f"Modèle sauvegardé: {model_path}")
+        self.logger.info(f"Rapport généré: {report_path}")
     
     def load(self, name: str = "isolation_forest_model"):
         """Charge le modèle"""
@@ -366,8 +584,9 @@ class NeuralNetworkThreatModel(ThreatDetectionModel):
     """Modèle de réseau de neurones profond"""
     
     def __init__(self, model_dir: str = "models", 
-                 input_dim: int = 85, hidden_layers: List[int] = [128, 64, 32]):
-        super().__init__(model_dir)
+                 input_dim: int = 85, hidden_layers: List[int] = [128, 64, 32],
+                 db_path: Optional[str] = None):
+        super().__init__(model_dir, db_path)
         
         if not TENSORFLOW_AVAILABLE:
             raise ImportError("TensorFlow n'est pas installé. pip install tensorflow")
@@ -504,6 +723,7 @@ class NeuralNetworkThreatModel(ThreatDetectionModel):
         model_path = self.model_dir / f"{name}.h5"
         scaler_path = self.model_dir / f"{name}_scaler.pkl"
         metadata_path = self.model_dir / f"{name}_metadata.json"
+        report_path = self.model_dir / f"{name}_report.txt"
         
         # Sauvegarder le modèle TensorFlow
         self.model.save(model_path)
@@ -524,7 +744,13 @@ class NeuralNetworkThreatModel(ThreatDetectionModel):
         with open(metadata_path, 'w') as f:
             json.dump(metadata, f, indent=2)
         
+        # Générer et sauvegarder le rapport texte
+        report_text = self._generate_text_report(name)
+        with open(report_path, 'w', encoding='utf-8') as f:
+            f.write(report_text)
+        
         self.logger.info(f"Modèle sauvegardé: {model_path}")
+        self.logger.info(f"Rapport généré: {report_path}")
     
     def load(self, name: str = "neural_network_model"):
         """Charge le modèle"""

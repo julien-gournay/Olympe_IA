@@ -377,9 +377,9 @@ class ContinuousLearningSystem:
         
         # 3. Créer et entraîner le modèle
         if model_type == "random_forest":
-            model = RandomForestThreatModel(str(self.model_dir))
+            model = RandomForestThreatModel(str(self.model_dir), db_path=str(self.db_path))
         elif model_type == "anomaly":
-            model = AnomalyDetectionModel(str(self.model_dir))
+            model = AnomalyDetectionModel(str(self.model_dir), db_path=str(self.db_path))
         else:
             raise ValueError(f"Type de modèle inconnu: {model_type}")
         
@@ -532,9 +532,9 @@ def main():
             model_name = get_next_zeus_version()
         
         if args.model_type == 'random_forest':
-            model = RandomForestThreatModel()
+            model = RandomForestThreatModel(db_path=args.db)
         else:
-            model = AnomalyDetectionModel()
+            model = AnomalyDetectionModel(db_path=args.db)
         
         print(f"\nEntraînement du modèle {args.model_type}...")
         print(f"Nom du modèle: {model_name}")
