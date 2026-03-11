@@ -102,6 +102,9 @@ class ManualValidationUI:
         y_scroll.grid(row=0, column=1, sticky="ns")
         x_scroll.grid(row=1, column=0, sticky="ew")
 
+        self.tree.tag_configure("label_1", background="#ffcccc", foreground="#8b0000")
+        self.tree.tag_configure("label_0", background="#ccffcc", foreground="#005000")
+
         table_frame.rowconfigure(0, weight=1)
         table_frame.columnconfigure(0, weight=1)
 
@@ -202,9 +205,15 @@ class ManualValidationUI:
             return
 
         for row in rows:
-            feedback_text = "non valide"
-            if row[11] is not None:
-                feedback_text = "label=" + str(int(row[11]))
+            if row[11] is None:
+                feedback_text = "non valide"
+                row_tag = "unvalidated"
+            elif int(row[11]) == 1:
+                feedback_text = "label=1"
+                row_tag = "label_1"
+            else:
+                feedback_text = "label=0"
+                row_tag = "label_0"
 
             self.tree.insert(
                 "",
@@ -220,7 +229,7 @@ class ManualValidationUI:
                     row[7],
                     feedback_text,
                 ),
-                tags=(str(row[0]),),
+                tags=(row_tag,),
             )
 
         self.status_var.set(f"{len(rows)} alerte(s) chargee(s)")
