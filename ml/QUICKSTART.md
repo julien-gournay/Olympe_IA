@@ -118,6 +118,21 @@ model, metrics = system.retrain_with_feedback(
 )
 ```
 
+### Cas 2 bis : Validation manuelle via interface locale
+
+Pour valider/corriger les alertes manuellement et alimenter `ml_feedback` sans coder:
+
+```bash
+cd ml
+python manual_validation_ui.py --db ../zeus/pcap_database.db
+```
+
+Fonctionnalites principales:
+- Liste des alertes avec filtre des elements non valides
+- Validation rapide: "Confirmer menace" (label=1) ou "Marquer normal" (label=0)
+- Choix de la confiance du feedback (0 a 1)
+- Re-entrainement declenchable directement depuis l'interface
+
 ### Cas 3 : Analyse en Temps Réel
 
 Intégrer dans le service de capture :

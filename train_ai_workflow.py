@@ -62,6 +62,8 @@ class AITrainingWorkflow:
         enable_tuning=True,
         enable_group_split=True,
         use_flow_dataset=False,
+        auto_open_validation_ui=False,
+        prompt_validation_ui=True,
     ):
         self.root_dir = Path(__file__).parent
         self.zeus_dir = self.root_dir / "zeus"
@@ -72,10 +74,36 @@ class AITrainingWorkflow:
         self.enable_tuning = bool(enable_tuning)
         self.enable_group_split = bool(enable_group_split)
         self.use_flow_dataset = bool(use_flow_dataset)
+        self.auto_open_validation_ui = bool(auto_open_validation_ui)
+        self.prompt_validation_ui = bool(prompt_validation_ui)
         self.timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         self.pcap_file = "training_ai.pcap"
         self.db_path = self.zeus_dir / "pcap_database.db"
         self.use_existing_capture = False
+
+    def open_manual_validation_ui(self):
+        """Lance l'interface de validation manuelle des alertes."""
+        self.print_info("Ouverture de l'interface de validation manuelle...")
+
+        cmd = [
+            sys.executable,
+            "manual_validation_ui.py",
+            "--db", str(self.db_path),
+        ]
+
+        success, _ = self.run_command(
+            cmd,
+            cwd=self.ml_dir,
+            timeout=None,
+            progress_msg="Validation manuelle",
+        )
+
+        if success:
+            self.print_success("Interface de validation manuelle fermee")
+            return True
+
+        self.print_warning("Impossible d'ouvrir l'interface de validation manuelle")
+        return False
         
     def print_step(self, step_num, total_steps, message):
         """Affiche un message de progression"""
@@ -635,6 +663,18 @@ class AITrainingWorkflow:
         print(f"  1. Tester le modèle: cd ml && python ml_detector.py -f ../zeus/{self.pcap_file} --model models/{model_name}")
         print(f"  2. Utiliser l'analyse hybride: cd ml && python hybrid_analyzer.py -f ../zeus/{self.pcap_file}")
         print(f"  3. Améliorer avec feedback: Voir ml/QUICKSTART.md section 'Cas 2: Amélioration Continue'")
+
+        if self.auto_open_validation_ui:
+            self.open_manual_validation_ui()
+        elif self.prompt_validation_ui:
+            try:
+                response = input(
+                    f"\n{Colors.OKCYAN}Ouvrir l'interface de validation manuelle maintenant ? [o/N]: {Colors.ENDC}"
+                ).strip().lower()
+                if response in ['o', 'oui', 'y', 'yes']:
+                    self.open_manual_validation_ui()
+            except (KeyboardInterrupt, EOFError):
+                print(f"\n{Colors.WARNING}Ouverture de l'interface ignoree{Colors.ENDC}")
         
         return True
 
@@ -689,6 +729,18 @@ Exemples:
         action="store_true",
         help="Utiliser le dataset par flux au lieu du dataset par paquet"
     )
+
+    parser.add_argument(
+        "--open-validation-ui",
+        action="store_true",
+        help="Ouvrir automatiquement l'interface de validation manuelle en fin de workflow"
+    )
+
+    parser.add_argument(
+        "--no-validation-ui-prompt",
+        action="store_true",
+        help="Ne pas demander d'ouvrir l'interface de validation manuelle en fin de workflow"
+    )
     
     args = parser.parse_args()
     
@@ -716,6 +768,8 @@ Exemples:
         enable_tuning=not args.disable_tuning,
         enable_group_split=not args.disable_group_split,
         use_flow_dataset=args.use_flow_dataset,
+        auto_open_validation_ui=args.open_validation_ui,
+        prompt_validation_ui=not args.no_validation_ui_prompt,
     )
     
     try:

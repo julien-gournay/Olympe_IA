@@ -11,7 +11,7 @@ import sqlite3
 import logging
 from pathlib import Path
 from datetime import datetime
-from typing import List, Dict, Tuple, Optional
+from typing import List, Dict, Tuple, Optional, Literal, overload
 from collections import Counter
 from scapy.layers.inet import IP, TCP, UDP, ICMP
 
@@ -31,6 +31,24 @@ class ThreatDatasetBuilder:
         self.extractor = NetworkFeatureExtractor()
         self.logger = logging.getLogger(__name__)
         
+    @overload
+    def build_from_alerts(
+        self,
+        pcap_file_id: Optional[int] = None,
+        min_confidence: float = 0.7,
+        return_groups: Literal[False] = False,
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        ...
+
+    @overload
+    def build_from_alerts(
+        self,
+        pcap_file_id: Optional[int] = None,
+        min_confidence: float = 0.7,
+        return_groups: Literal[True] = True,
+    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+        ...
+
     def build_from_alerts(self, pcap_file_id: Optional[int] = None,
                          min_confidence: float = 0.7,
                          return_groups: bool = False) -> Tuple[np.ndarray, np.ndarray] | Tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -483,22 +501,31 @@ class ContinuousLearningSystem:
     
     def _check_retrain_needed(self):
         """Vérifie si un ré-entraînement est nécessaire"""
+        unused_feedback_count = self.get_unused_feedback_count()
+
+        if unused_feedback_count >= self.feedback_threshold:
+            self.logger.info(f"Seuil atteint ({unused_feedback_count} feedbacks non utilisés)")
+            self.logger.info("Ré-entraînement recommandé!")
+            return True
+
+        return False
+
+    def get_unused_feedback_count(self) -> int:
+        """Retourne le nombre de feedbacks non encore utilises pour l'entrainement."""
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
-            
-            cursor.execute("""
-                SELECT COUNT(*) FROM ml_feedback 
+            cursor.execute(
+                """
+                SELECT COUNT(*) FROM ml_feedback
                 WHERE used_for_training = 0
-            """)
-            
-            unused_feedback_count = cursor.fetchone()[0]
-            
-            if unused_feedback_count >= self.feedback_threshold:
-                self.logger.info(f"Seuil atteint ({unused_feedback_count} feedbacks non utilisés)")
-                self.logger.info("Ré-entraînement recommandé!")
-                return True
-            
-            return False
+                """
+            )
+            result = cursor.fetchone()
+            return int(result[0]) if result else 0
+
+    def is_retrain_recommended(self) -> bool:
+        """Indique si le seuil de feedback necessaire au re-entrainement est atteint."""
+        return self.get_unused_feedback_count() >= self.feedback_threshold
     
     def retrain_with_feedback(self, model_name: Optional[str] = None,
                              model_type: str = "random_forest"):
@@ -700,20 +727,21 @@ def main():
         
         if args.model_type == 'random_forest':
             model = RandomForestThreatModel(db_path=args.db)
+            groups_for_training = None if args.no_group_split else groups
+            metrics = model.train(
+                X,
+                y,
+                groups=groups_for_training,
+                cv_folds=max(2, args.cv_folds),
+                use_hyperparameter_search=bool(args.tune_hyperparams),
+            )
         else:
             model = AnomalyDetectionModel(db_path=args.db)
+            metrics = model.train(X, y, validation_split=0.2)
         
         print(f"\nEntraînement du modèle {args.model_type}...")
         print(f"Nom du modèle: {model_name}")
         print(f"Mode dataset: {args.dataset_mode}")
-        groups_for_training = None if args.no_group_split else groups
-        metrics = model.train(
-            X,
-            y,
-            groups=groups_for_training,
-            cv_folds=max(2, args.cv_folds),
-            use_hyperparameter_search=bool(args.tune_hyperparams),
-        )
         model.save(model_name)
         
         print("\n=== Résultats ===")
