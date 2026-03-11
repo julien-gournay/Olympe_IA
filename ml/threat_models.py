@@ -14,8 +14,20 @@ from datetime import datetime
 from typing import Dict, List, Tuple, Optional, Any
 from sklearn.ensemble import RandomForestClassifier, IsolationForest
 from sklearn.preprocessing import StandardScaler
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import classification_report, confusion_matrix, roc_auc_score
+from sklearn.model_selection import (
+    train_test_split,
+    GroupShuffleSplit,
+    GroupKFold,
+    StratifiedKFold,
+    GridSearchCV,
+)
+from sklearn.metrics import (
+    classification_report,
+    confusion_matrix,
+    roc_auc_score,
+    precision_recall_curve,
+    f1_score,
+)
 import logging
 
 # Neural Network (optionnel)
@@ -39,11 +51,15 @@ class ThreatDetectionModel:
         self.feature_importance = None
         self.training_history = []
         self.db_path = db_path
+        self.optimal_threshold = 0.5
         
         self.logger = logging.getLogger(__name__)
         
-    def train(self, X: np.ndarray, y: np.ndarray, 
-             validation_split: float = 0.2) -> Dict:
+    def train(self, X: np.ndarray, y: np.ndarray,
+             validation_split: float = 0.2,
+             groups: Optional[np.ndarray] = None,
+             cv_folds: int = 5,
+             use_hyperparameter_search: bool = False) -> Dict:
         """
         Entraîne le modèle
         
@@ -289,24 +305,16 @@ class RandomForestThreatModel(ThreatDetectionModel):
             class_weight='balanced'  # Pour gérer les classes déséquilibrées
         )
     
-    def train(self, X: np.ndarray, y: np.ndarray, 
-             validation_split: float = 0.2) -> Dict:
+    def train(self, X: np.ndarray, y: np.ndarray,
+             validation_split: float = 0.2,
+             groups: Optional[np.ndarray] = None,
+             cv_folds: int = 5,
+             use_hyperparameter_search: bool = False) -> Dict:
         """Entraîne le Random Forest"""
-        
-        # Split train/validation
-        # Vérifier si stratify est possible (au moins 2 échantillons par classe)
-        unique_classes, counts = np.unique(y, return_counts=True)
-        use_stratify = all(count >= 2 for count in counts) and len(unique_classes) > 1
-        
-        if use_stratify:
-            X_train, X_val, y_train, y_val = train_test_split(
-                X, y, test_size=validation_split, random_state=42, stratify=y
-            )
-        else:
-            self.logger.warning("Stratification désactivée - classes insuffisantes ou déséquilibrées")
-            X_train, X_val, y_train, y_val = train_test_split(
-                X, y, test_size=validation_split, random_state=42
-            )
+
+        X_train, X_val, y_train, y_val, groups_train = self._split_train_validation(
+            X, y, validation_split, groups
+        )
         
         self.logger.info(f"Entraînement sur {len(X_train)} échantillons, "
                         f"validation sur {len(X_val)} échantillons")
@@ -315,8 +323,17 @@ class RandomForestThreatModel(ThreatDetectionModel):
         X_train_scaled = self.scaler.fit_transform(X_train)
         X_val_scaled = self.scaler.transform(X_val)
         
-        # Entraînement
+        # Validation croisée avant entraînement final
+        cv_metrics = self._compute_cross_validation_metrics(
+            X_train_scaled, y_train, groups_train, cv_folds
+        )
+
+        # Entraînement (optionnellement avec recherche d'hyperparamètres)
         self.logger.info("Entraînement du Random Forest...")
+        if use_hyperparameter_search:
+            self.model = self._run_hyperparameter_search(
+                X_train_scaled, y_train, groups_train, cv_folds
+            )
         self.model.fit(X_train_scaled, y_train)
         
         # Évaluation
@@ -330,6 +347,10 @@ class RandomForestThreatModel(ThreatDetectionModel):
         else:
             # Deux classes - utiliser la probabilité de la classe positive (1)
             y_pred_proba = y_pred_proba_all[:, 1]
+
+        # Seuil optimisé sur le jeu de validation
+        self.optimal_threshold = self._optimize_threshold(y_val, y_pred_proba)
+        y_pred_threshold = (y_pred_proba >= self.optimal_threshold).astype(int)
         
         # Métriques
         metrics = {
@@ -338,9 +359,14 @@ class RandomForestThreatModel(ThreatDetectionModel):
             'val_samples': len(X_val),
             'train_accuracy': self.model.score(X_train_scaled, y_train),
             'val_accuracy': self.model.score(X_val_scaled, y_val),
-            'classification_report': classification_report(y_val, y_pred, output_dict=True),
-            'confusion_matrix': confusion_matrix(y_val, y_pred).tolist(),
+            'classification_report': classification_report(y_val, y_pred_threshold, output_dict=True),
+            'confusion_matrix': confusion_matrix(y_val, y_pred_threshold).tolist(),
+            'optimal_threshold': float(self.optimal_threshold),
+            'val_f1_thresholded': float(f1_score(y_val, y_pred_threshold, zero_division=0)),
         }
+
+        if cv_metrics:
+            metrics['cv'] = cv_metrics
         
         # ROC AUC si on a les deux classes
         if len(np.unique(y_val)) > 1 and y_pred_proba_all.shape[1] > 1:
@@ -356,8 +382,157 @@ class RandomForestThreatModel(ThreatDetectionModel):
                         f"Val={metrics['val_accuracy']:.4f}")
         if 'roc_auc' in metrics:
             self.logger.info(f"ROC AUC: {metrics['roc_auc']:.4f}")
+        self.logger.info(f"Seuil optimisé: {self.optimal_threshold:.4f}")
         
         return metrics
+
+    def _split_train_validation(
+        self,
+        X: np.ndarray,
+        y: np.ndarray,
+        validation_split: float,
+        groups: Optional[np.ndarray],
+    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, Optional[np.ndarray]]:
+        """Réalise un split train/validation en évitant la fuite par groupe si possible."""
+        if groups is not None:
+            unique_groups = np.unique(groups)
+            if len(unique_groups) > 1:
+                splitter = GroupShuffleSplit(
+                    n_splits=1,
+                    test_size=validation_split,
+                    random_state=42,
+                )
+                train_idx, val_idx = next(splitter.split(X, y, groups=groups))
+                return (
+                    X[train_idx],
+                    X[val_idx],
+                    y[train_idx],
+                    y[val_idx],
+                    groups[train_idx],
+                )
+
+        unique_classes, counts = np.unique(y, return_counts=True)
+        use_stratify = all(count >= 2 for count in counts) and len(unique_classes) > 1
+
+        if use_stratify:
+            X_train, X_val, y_train, y_val = train_test_split(
+                X, y, test_size=validation_split, random_state=42, stratify=y
+            )
+        else:
+            self.logger.warning("Stratification désactivée - classes insuffisantes ou déséquilibrées")
+            X_train, X_val, y_train, y_val = train_test_split(
+                X, y, test_size=validation_split, random_state=42
+            )
+
+        return X_train, X_val, y_train, y_val, None
+
+    def _compute_cross_validation_metrics(
+        self,
+        X_train: np.ndarray,
+        y_train: np.ndarray,
+        groups_train: Optional[np.ndarray],
+        cv_folds: int,
+    ) -> Dict[str, float]:
+        """Calcule des métriques CV robustes sur l'ensemble d'entraînement."""
+        try:
+            n_folds = max(2, min(cv_folds, len(X_train)))
+            if groups_train is not None and len(np.unique(groups_train)) >= n_folds:
+                cv = GroupKFold(n_splits=n_folds)
+                cv_scores = []
+                for tr_idx, te_idx in cv.split(X_train, y_train, groups=groups_train):
+                    fold_model = RandomForestClassifier(
+                        n_estimators=self.model.n_estimators,
+                        max_depth=self.model.max_depth,
+                        random_state=42,
+                        n_jobs=-1,
+                        class_weight='balanced'
+                    )
+                    fold_model.fit(X_train[tr_idx], y_train[tr_idx])
+                    fold_pred = fold_model.predict(X_train[te_idx])
+                    cv_scores.append(f1_score(y_train[te_idx], fold_pred, zero_division=0))
+            else:
+                cv = StratifiedKFold(
+                    n_splits=min(n_folds, max(2, np.min(np.bincount(y_train.astype(int))))),
+                    shuffle=True,
+                    random_state=42,
+                )
+                cv_scores = []
+                for tr_idx, te_idx in cv.split(X_train, y_train):
+                    fold_model = RandomForestClassifier(
+                        n_estimators=self.model.n_estimators,
+                        max_depth=self.model.max_depth,
+                        random_state=42,
+                        n_jobs=-1,
+                        class_weight='balanced'
+                    )
+                    fold_model.fit(X_train[tr_idx], y_train[tr_idx])
+                    fold_pred = fold_model.predict(X_train[te_idx])
+                    cv_scores.append(f1_score(y_train[te_idx], fold_pred, zero_division=0))
+
+            return {
+                'f1_mean': float(np.mean(cv_scores)),
+                'f1_std': float(np.std(cv_scores)),
+                'folds': float(len(cv_scores)),
+            }
+        except Exception as exc:
+            self.logger.warning(f"CV ignorée: {exc}")
+            return {}
+
+    def _run_hyperparameter_search(
+        self,
+        X_train: np.ndarray,
+        y_train: np.ndarray,
+        groups_train: Optional[np.ndarray],
+        cv_folds: int,
+    ) -> RandomForestClassifier:
+        """Recherche simple d'hyperparamètres avec GridSearchCV."""
+        param_grid = {
+            'n_estimators': [100, 200],
+            'max_depth': [10, 20, None],
+            'min_samples_leaf': [1, 2, 4],
+        }
+
+        if groups_train is not None and len(np.unique(groups_train)) >= max(2, cv_folds):
+            cv = GroupKFold(n_splits=cv_folds)
+        else:
+            cv = StratifiedKFold(n_splits=cv_folds, shuffle=True, random_state=42)
+
+        search = GridSearchCV(
+            estimator=RandomForestClassifier(
+                random_state=42,
+                n_jobs=-1,
+                class_weight='balanced',
+            ),
+            param_grid=param_grid,
+            scoring='f1',
+            cv=cv,
+            n_jobs=-1,
+            refit=True,
+        )
+
+        if isinstance(cv, GroupKFold) and groups_train is not None:
+            search.fit(X_train, y_train, groups=groups_train)
+        else:
+            search.fit(X_train, y_train)
+
+        self.logger.info(f"Meilleurs hyperparamètres: {search.best_params_}")
+        self.logger.info(f"Meilleur score CV (F1): {search.best_score_:.4f}")
+        return search.best_estimator_
+
+    def _optimize_threshold(self, y_true: np.ndarray, y_proba: np.ndarray) -> float:
+        """Optimise le seuil de décision en maximisant le F1 sur validation."""
+        if len(np.unique(y_true)) < 2:
+            return 0.5
+
+        precision, recall, thresholds = precision_recall_curve(y_true, y_proba)
+        if len(thresholds) == 0:
+            return 0.5
+
+        f1_scores = (2 * precision[:-1] * recall[:-1]) / (
+            precision[:-1] + recall[:-1] + 1e-10
+        )
+        best_idx = int(np.argmax(f1_scores))
+        return float(thresholds[best_idx])
     
     def predict(self, X: np.ndarray) -> np.ndarray:
         """Prédit les labels (0 = normal, 1 = malicious)"""
@@ -365,6 +540,14 @@ class RandomForestThreatModel(ThreatDetectionModel):
             raise ValueError("Model not trained or loaded")
         
         X_scaled = self.scaler.transform(X)
+        if hasattr(self.model, "predict_proba"):
+            y_proba_all = self.model.predict_proba(X_scaled)
+            if y_proba_all.shape[1] == 1:
+                y_proba = y_proba_all[:, 0]
+            else:
+                y_proba = y_proba_all[:, 1]
+            threshold = float(getattr(self, 'optimal_threshold', 0.5))
+            return (y_proba >= threshold).astype(int)
         return self.model.predict(X_scaled)
     
     def predict_proba(self, X: np.ndarray) -> np.ndarray:
@@ -395,6 +578,7 @@ class RandomForestThreatModel(ThreatDetectionModel):
             'model_type': 'RandomForest',
             'training_history': self.training_history,
             'feature_importance': self.feature_importance.tolist() if self.feature_importance is not None else None,
+            'optimal_threshold': float(getattr(self, 'optimal_threshold', 0.5)),
             'saved_at': datetime.now().isoformat()
         }
         
@@ -434,6 +618,7 @@ class RandomForestThreatModel(ThreatDetectionModel):
                 fi = metadata.get('feature_importance')
                 if fi:
                     self.feature_importance = np.array(fi)
+                self.optimal_threshold = float(metadata.get('optimal_threshold', 0.5))
         
         self.logger.info(f"Modèle chargé: {model_path}")
     

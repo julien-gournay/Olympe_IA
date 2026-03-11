@@ -13,6 +13,7 @@ from pathlib import Path
 from datetime import datetime
 from typing import List, Dict, Tuple, Optional
 from collections import Counter
+from scapy.layers.inet import IP, TCP, UDP, ICMP
 
 # Ajouter le chemin parent pour les imports
 sys.path.append(str(Path(__file__).parent.parent))
@@ -31,7 +32,8 @@ class ThreatDatasetBuilder:
         self.logger = logging.getLogger(__name__)
         
     def build_from_alerts(self, pcap_file_id: Optional[int] = None,
-                         min_confidence: float = 0.7) -> Tuple[np.ndarray, np.ndarray]:
+                         min_confidence: float = 0.7,
+                         return_groups: bool = False) -> Tuple[np.ndarray, np.ndarray] | Tuple[np.ndarray, np.ndarray, np.ndarray]:
         """
         Construit un dataset à partir des alertes de menaces
         
@@ -62,6 +64,7 @@ class ThreatDatasetBuilder:
             
             X_list = []
             y_list = []
+            groups_list: List[int] = []
             
             for file_id, file_path in pcap_files:
                 self.logger.info(f"Traitement du fichier: {file_path}")
@@ -114,6 +117,8 @@ class ThreatDatasetBuilder:
                         
                         X_list.append(features)
                         y_list.append(label)
+                        if return_groups:
+                            groups_list.append(file_id)
                     
                     self.logger.info(f"  {len(packets)} paquets traités")
                     
@@ -130,6 +135,8 @@ class ThreatDatasetBuilder:
                 self.logger.warning("  1. Les fichiers PCAP existent et sont accessibles")
                 self.logger.warning("  2. L'ingestion PCAP a été exécutée avec succès")
                 self.logger.warning("  3. Des alertes ont été générées pendant l'ingestion")
+                if return_groups:
+                    return X, y, np.array(groups_list)
                 return X, y
             
             # Statistiques
@@ -140,7 +147,22 @@ class ThreatDatasetBuilder:
             self.logger.info(f"  Normal: {normal_count} ({normal_count/len(y)*100:.1f}%)")
             self.logger.info(f"  Malicious: {malicious_count} ({malicious_count/len(y)*100:.1f}%)")
             
+            if return_groups:
+                return X, y, np.array(groups_list)
             return X, y
+
+    def build_from_alerts_with_groups(
+        self,
+        pcap_file_id: Optional[int] = None,
+        min_confidence: float = 0.7,
+    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Construit un dataset et retourne aussi l'ID PCAP comme groupe (anti-fuite)."""
+        X, y, groups = self.build_from_alerts(
+            pcap_file_id=pcap_file_id,
+            min_confidence=min_confidence,
+            return_groups=True,
+        )
+        return X, y, groups
     
     def build_from_labeled_pcaps(self, labeled_pcaps: List[Dict]) -> Tuple[np.ndarray, np.ndarray]:
         """
@@ -190,11 +212,142 @@ class ThreatDatasetBuilder:
         Returns:
             (X, y) - Features de flux et labels
         """
+        X, y, _ = self.build_from_flows_with_groups(pcap_file_id=pcap_file_id)
+        return X, y
+
+    def build_from_flows_with_groups(
+        self,
+        pcap_file_id: Optional[int] = None,
+        min_confidence: float = 0.7,
+    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Construit un dataset par flux et retourne aussi l'ID PCAP comme groupe."""
         self.logger.info("Construction du dataset par flux...")
-        
-        # À implémenter : agrégation par flux
-        # Cette méthode nécessiterait d'extraire les flux depuis ingestion_pcap
-        raise NotImplementedError("Feature extraction par flux à implémenter")
+
+        if not self.db_path.exists():
+            self.logger.warning(f"Database not found: {self.db_path}")
+            self.logger.warning("Retour d'un dataset vide. Veuillez d'abord exécuter l'ingestion PCAP.")
+            return np.array([]), np.array([]), np.array([])
+
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+
+            if pcap_file_id:
+                cursor.execute("SELECT id, file_path FROM pcap_files WHERE id = ?", (pcap_file_id,))
+            else:
+                cursor.execute("SELECT id, file_path FROM pcap_files")
+
+            pcap_files = cursor.fetchall()
+
+            X_list = []
+            y_list = []
+            groups_list: List[int] = []
+
+            for file_id, file_path in pcap_files:
+                self.logger.info(f"Traitement du fichier: {file_path}")
+
+                cursor.execute(
+                    """
+                    SELECT packet_number, severity
+                    FROM threat_alerts
+                    WHERE pcap_file_id = ?
+                    """,
+                    (file_id,),
+                )
+                alerts = cursor.fetchall()
+
+                alert_dict: Dict[int, List[float]] = {}
+                for packet_num, severity in alerts:
+                    severity_score = {
+                        'INFO': 0.2,
+                        'LOW': 0.4,
+                        'MEDIUM': 0.6,
+                        'HIGH': 0.8,
+                        'CRITICAL': 1.0,
+                    }.get(severity, 0.5)
+                    alert_dict.setdefault(packet_num, []).append(severity_score)
+
+                try:
+                    pcap_path = Path(file_path)
+                    if not pcap_path.exists():
+                        self.logger.warning(f"Fichier PCAP non trouvé, ignoré: {file_path}")
+                        continue
+
+                    packets = rdpcap(str(pcap_path))
+
+                    flow_packets: Dict[Tuple[str, str, int, int, str], List] = {}
+                    flow_scores: Dict[Tuple[str, str, int, int, str], List[float]] = {}
+
+                    for packet_idx, packet in enumerate(packets, 1):
+                        flow_key = self._get_flow_key(packet)
+                        if flow_key is None:
+                            continue
+
+                        flow_packets.setdefault(flow_key, []).append(packet)
+                        flow_scores.setdefault(flow_key, [])
+
+                        if packet_idx in alert_dict:
+                            flow_scores[flow_key].append(float(np.mean(alert_dict[packet_idx])))
+
+                    for flow_key, flow_packet_list in flow_packets.items():
+                        features = self.extractor.extract_flow_features(flow_packet_list)
+                        score_list = flow_scores.get(flow_key, [])
+                        flow_score = max(score_list) if score_list else 0.0
+                        label = 1 if flow_score >= min_confidence else 0
+
+                        X_list.append(features)
+                        y_list.append(label)
+                        groups_list.append(file_id)
+
+                    self.logger.info(f"  {len(flow_packets)} flux construits")
+
+                except Exception as e:
+                    self.logger.error(f"Erreur lors du traitement de {file_path}: {e}")
+
+            X = np.array(X_list)
+            y = np.array(y_list)
+            groups = np.array(groups_list)
+
+            if len(X) == 0:
+                self.logger.warning("Dataset flux vide!")
+                return X, y, groups
+
+            malicious_count = np.sum(y == 1)
+            normal_count = np.sum(y == 0)
+
+            self.logger.info(f"Dataset flux construit: {len(X)} échantillons")
+            self.logger.info(f"  Normal: {normal_count} ({normal_count/len(y)*100:.1f}%)")
+            self.logger.info(f"  Malicious: {malicious_count} ({malicious_count/len(y)*100:.1f}%)")
+
+            return X, y, groups
+
+    def _get_flow_key(self, packet) -> Optional[Tuple[str, str, int, int, str]]:
+        """Construit une clé canonique de flux bidirectionnel (5-tuple simplifié)."""
+        if not packet.haslayer(IP):
+            return None
+
+        src_ip = str(packet[IP].src)
+        dst_ip = str(packet[IP].dst)
+        src_port = 0
+        dst_port = 0
+        protocol = 'OTHER'
+
+        if packet.haslayer(TCP):
+            src_port = int(packet[TCP].sport)
+            dst_port = int(packet[TCP].dport)
+            protocol = 'TCP'
+        elif packet.haslayer(UDP):
+            src_port = int(packet[UDP].sport)
+            dst_port = int(packet[UDP].dport)
+            protocol = 'UDP'
+        elif packet.haslayer(ICMP):
+            protocol = 'ICMP'
+
+        endpoint_a = (src_ip, src_port)
+        endpoint_b = (dst_ip, dst_port)
+
+        if endpoint_a <= endpoint_b:
+            return (endpoint_a[0], endpoint_b[0], endpoint_a[1], endpoint_b[1], protocol)
+        return (endpoint_b[0], endpoint_a[0], endpoint_b[1], endpoint_a[1], protocol)
 
 
 def get_next_zeus_version(model_dir: str = "models") -> str:
@@ -499,19 +652,33 @@ def main():
                        help='Nom du modèle (défaut: auto-versionnement ZeusX)')
     parser.add_argument('--db', default='pcap_database.db',
                        help='Chemin vers la base de données')
+    parser.add_argument('--no-group-split', action='store_true',
+                       help='Désactiver le split anti-fuite par fichier PCAP')
+    parser.add_argument('--cv-folds', type=int, default=5,
+                       help='Nombre de folds pour la validation croisée (défaut: 5)')
+    parser.add_argument('--tune-hyperparams', action='store_true',
+                       help='Activer une recherche d\'hyperparamètres (Random Forest)')
+    parser.add_argument('--dataset-mode', default='packet', choices=['packet', 'flow'],
+                       help='Mode de dataset: packet (défaut) ou flow')
     
     args = parser.parse_args()
     
     if args.build_dataset:
         builder = ThreatDatasetBuilder(args.db)
-        X, y = builder.build_from_alerts()
+        if args.dataset_mode == 'flow':
+            X, y, _ = builder.build_from_flows_with_groups()
+        else:
+            X, y = builder.build_from_alerts()
         print(f"\nDataset construit: {len(X)} échantillons")
         print(f"Shape: {X.shape}")
         print(f"Labels: {Counter(y)}")
     
     elif args.train:
         builder = ThreatDatasetBuilder(args.db)
-        X, y = builder.build_from_alerts()
+        if args.dataset_mode == 'flow':
+            X, y, groups = builder.build_from_flows_with_groups()
+        else:
+            X, y, groups = builder.build_from_alerts_with_groups()
         
         # Vérifier que le dataset n'est pas vide
         if len(X) == 0:
@@ -538,14 +705,28 @@ def main():
         
         print(f"\nEntraînement du modèle {args.model_type}...")
         print(f"Nom du modèle: {model_name}")
-        metrics = model.train(X, y)
+        print(f"Mode dataset: {args.dataset_mode}")
+        groups_for_training = None if args.no_group_split else groups
+        metrics = model.train(
+            X,
+            y,
+            groups=groups_for_training,
+            cv_folds=max(2, args.cv_folds),
+            use_hyperparameter_search=bool(args.tune_hyperparams),
+        )
         model.save(model_name)
         
         print("\n=== Résultats ===")
         print(f"Modèle sauvegardé: {model_name}")
         print(f"Accuracy: {metrics['val_accuracy']:.4f}")
+        if 'val_f1_thresholded' in metrics:
+            print(f"F1 (seuil optimisé): {metrics['val_f1_thresholded']:.4f}")
+        if 'optimal_threshold' in metrics:
+            print(f"Seuil optimisé: {metrics['optimal_threshold']:.4f}")
         if 'roc_auc' in metrics:
             print(f"ROC AUC: {metrics['roc_auc']:.4f}")
+        if 'cv' in metrics:
+            print(f"CV F1: {metrics['cv'].get('f1_mean', 0):.4f} +/- {metrics['cv'].get('f1_std', 0):.4f}")
     
     elif args.retrain:
         system = ContinuousLearningSystem(db_path=args.db)

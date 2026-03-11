@@ -42,7 +42,7 @@ class MLThreatDetector:
     
     def __init__(self, model_path: str = "models/threat_detector",
                  model_type: str = "random_forest",
-                 confidence_threshold: float = 0.7):
+                 confidence_threshold: Optional[float] = None):
         """
         Args:
             model_path: Chemin vers le modèle pré-entraîné
@@ -110,14 +110,18 @@ class MLThreatDetector:
             
             # Prédire (model est garanti non-None ici)
             assert self.model is not None
-            prediction = self.model.predict(features)[0]
             probabilities = self.model.predict_proba(features)[0]
             
             # Probabilité de menace (classe 1)
             threat_probability = probabilities[1]
+
+            # Seuil effectif: override CLI > seuil calibré du modèle > fallback
+            effective_threshold = self.confidence_threshold
+            if effective_threshold is None:
+                effective_threshold = float(getattr(self.model, 'optimal_threshold', 0.7))
             
             # Vérifier le seuil
-            if prediction == 1 and threat_probability >= self.confidence_threshold:
+            if threat_probability >= effective_threshold:
                 # Extraire informations du paquet
                 from scapy.layers.inet import IP, TCP, UDP
                 
@@ -320,8 +324,9 @@ def main():
     parser.add_argument('--model-type', default='random_forest',
                        choices=['random_forest', 'anomaly'],
                        help='Type de modèle')
-    parser.add_argument('--threshold', type=float, default=0.7,
-                       help='Seuil de confiance (0-1)')
+    parser.add_argument('--threshold', type=float,
+                       default=None,
+                       help='Seuil de confiance (0-1). Défaut: seuil calibré du modèle')
     parser.add_argument('--feature-importance', action='store_true',
                        help='Afficher l\'importance des features')
     

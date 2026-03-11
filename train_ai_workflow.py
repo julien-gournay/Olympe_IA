@@ -54,12 +54,24 @@ class Colors:
 class AITrainingWorkflow:
     """Gestionnaire du workflow complet d'entraînement"""
     
-    def __init__(self, network_interface="Wi-Fi", duration_minutes=15):
+    def __init__(
+        self,
+        network_interface="Wi-Fi",
+        duration_minutes=15,
+        cv_folds=5,
+        enable_tuning=True,
+        enable_group_split=True,
+        use_flow_dataset=False,
+    ):
         self.root_dir = Path(__file__).parent
         self.zeus_dir = self.root_dir / "zeus"
         self.ml_dir = self.root_dir / "ml"
         self.interface = network_interface
         self.duration_minutes = duration_minutes
+        self.cv_folds = max(2, int(cv_folds))
+        self.enable_tuning = bool(enable_tuning)
+        self.enable_group_split = bool(enable_group_split)
+        self.use_flow_dataset = bool(use_flow_dataset)
         self.timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         self.pcap_file = "training_ai.pcap"
         self.db_path = self.zeus_dir / "pcap_database.db"
@@ -423,12 +435,15 @@ class AITrainingWorkflow:
     def step3_build_dataset(self):
         """Étape 3: Construire le dataset ML"""
         self.print_step(3, 5, "Construction du dataset ML")
+
+        dataset_mode = "flow" if self.use_flow_dataset else "packet"
         
         cmd = [
             sys.executable,
             "trainer.py",
             "--build-dataset",
-            "--db", str(self.db_path)
+            "--db", str(self.db_path),
+            "--dataset-mode", dataset_mode,
         ]
         
         success, output = self.run_command(
@@ -456,16 +471,29 @@ class AITrainingWorkflow:
         # Utiliser le versionnement Zeus automatique
         model_name = self._get_next_zeus_version()
         
+        dataset_mode = "flow" if self.use_flow_dataset else "packet"
+
         cmd = [
             sys.executable,
             "trainer.py",
             "--train",
             "--model-type", "random_forest",
             "--model-name", model_name,
-            "--db", str(self.db_path)
+            "--db", str(self.db_path),
+            "--cv-folds", str(self.cv_folds),
+            "--dataset-mode", dataset_mode,
         ]
+
+        if self.enable_tuning:
+            cmd.append("--tune-hyperparams")
+        if not self.enable_group_split:
+            cmd.append("--no-group-split")
         
         self.print_info(f"Nom du modèle: {model_name}")
+        self.print_info(f"Mode dataset: {dataset_mode}")
+        self.print_info(f"Validation croisée: {self.cv_folds} folds")
+        self.print_info(f"Recherche d'hyperparamètres: {'activée' if self.enable_tuning else 'désactivée'}")
+        self.print_info(f"Split anti-fuite par PCAP: {'activé' if self.enable_group_split else 'désactivé'}")
         
         success, output = self.run_command(
             cmd, 
@@ -527,6 +555,10 @@ class AITrainingWorkflow:
         self.print_info(f"Interface réseau: {self.interface}")
         self.print_info(f"Durée de capture: {self.duration_minutes} minutes")
         self.print_info(f"Base de données: {self.db_path}")
+        self.print_info(f"Mode dataset: {'flow' if self.use_flow_dataset else 'packet'}")
+        self.print_info(f"CV folds (entraînement): {self.cv_folds}")
+        self.print_info(f"Tuning hyperparamètres: {'oui' if self.enable_tuning else 'non'}")
+        self.print_info(f"Split anti-fuite PCAP: {'oui' if self.enable_group_split else 'non'}")
         
         start_time = time.time()
         
@@ -632,6 +664,31 @@ Exemples:
         default=15,
         help="Durée de capture en minutes (défaut: 15)"
     )
+
+    parser.add_argument(
+        "--cv-folds",
+        type=int,
+        default=5,
+        help="Nombre de folds pour la validation croisée ML (défaut: 5)"
+    )
+
+    parser.add_argument(
+        "--disable-tuning",
+        action="store_true",
+        help="Désactiver la recherche d'hyperparamètres pendant l'entraînement"
+    )
+
+    parser.add_argument(
+        "--disable-group-split",
+        action="store_true",
+        help="Désactiver le split anti-fuite par fichier PCAP"
+    )
+
+    parser.add_argument(
+        "--use-flow-dataset",
+        action="store_true",
+        help="Utiliser le dataset par flux au lieu du dataset par paquet"
+    )
     
     args = parser.parse_args()
     
@@ -646,11 +703,19 @@ Exemples:
         if response.lower() not in ['o', 'oui', 'y', 'yes']:
             print("Annulé par l'utilisateur")
             return 0
+
+    if args.cv_folds < 2:
+        print(f"{Colors.FAIL}Erreur: --cv-folds doit être >= 2{Colors.ENDC}")
+        return 1
     
     # Lancer le workflow
     workflow = AITrainingWorkflow(
         network_interface=args.interface,
-        duration_minutes=args.duration
+        duration_minutes=args.duration,
+        cv_folds=args.cv_folds,
+        enable_tuning=not args.disable_tuning,
+        enable_group_split=not args.disable_group_split,
+        use_flow_dataset=args.use_flow_dataset,
     )
     
     try:
