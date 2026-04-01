@@ -64,6 +64,9 @@ class AITrainingWorkflow:
         use_flow_dataset=False,
         auto_open_validation_ui=False,
         prompt_validation_ui=True,
+        active_model_name="threat_detector",
+        enable_model_comparison=True,
+        auto_promote=False,
     ):
         self.root_dir = Path(__file__).parent
         self.zeus_dir = self.root_dir / "zeus"
@@ -76,6 +79,9 @@ class AITrainingWorkflow:
         self.use_flow_dataset = bool(use_flow_dataset)
         self.auto_open_validation_ui = bool(auto_open_validation_ui)
         self.prompt_validation_ui = bool(prompt_validation_ui)
+        self.active_model_name = active_model_name
+        self.enable_model_comparison = bool(enable_model_comparison)
+        self.auto_promote = bool(auto_promote)
         self.timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         self.pcap_file = "training_ai.pcap"
         self.db_path = self.zeus_dir / "pcap_database.db"
@@ -570,6 +576,81 @@ class AITrainingWorkflow:
         else:
             self.print_warning("Le test du modèle a échoué (cela peut être normal)")
             return True  # On ne bloque pas le workflow
+
+    def step6_evaluate_model(self, model_name):
+        """Étape 6: Évaluer le modèle entraîné sur le dataset courant."""
+        self.print_step(6, 7, "Évaluation du modèle entraîné")
+
+        dataset_mode = "flow" if self.use_flow_dataset else "packet"
+        cmd = [
+            sys.executable,
+            "trainer.py",
+            "--evaluate",
+            "--model-type", "random_forest",
+            "--model-name", model_name,
+            "--db", str(self.db_path),
+            "--dataset-mode", dataset_mode,
+        ]
+
+        success, output = self.run_command(
+            cmd,
+            cwd=self.ml_dir,
+            timeout=None,
+            progress_msg="Évaluation du modèle",
+        )
+
+        if success:
+            self.print_success(f"Évaluation terminée pour {model_name}")
+            if output:
+                print(f"\n{Colors.OKGREEN}{output}{Colors.ENDC}")
+            return True
+
+        self.print_warning("L'évaluation du modèle a échoué")
+        return True  # Workflow non bloquant
+
+    def step7_compare_and_promote(self, model_name):
+        """Étape 7: Comparer au modèle actif et éventuellement promouvoir."""
+        self.print_step(7, 7, "Comparaison au modèle actif et promotion")
+
+        active_model_file = self.ml_dir / "models" / f"{self.active_model_name}.pkl"
+        if not active_model_file.exists():
+            self.print_warning(
+                f"Aucun modèle actif trouvé ({self.active_model_name}). "
+                "Comparaison ignorée pour ce run."
+            )
+            return True
+
+        dataset_mode = "flow" if self.use_flow_dataset else "packet"
+        cmd = [
+            sys.executable,
+            "trainer.py",
+            "--compare",
+            "--model-type", "random_forest",
+            "--model-name", self.active_model_name,
+            "--candidate-model-name", model_name,
+            "--db", str(self.db_path),
+            "--dataset-mode", dataset_mode,
+            "--active-model-name", self.active_model_name,
+        ]
+
+        if self.auto_promote:
+            cmd.append("--promote-if-better")
+
+        success, output = self.run_command(
+            cmd,
+            cwd=self.ml_dir,
+            timeout=None,
+            progress_msg="Comparaison des modèles",
+        )
+
+        if success:
+            self.print_success("Comparaison des modèles terminée")
+            if output:
+                print(f"\n{Colors.OKBLUE}{output}{Colors.ENDC}")
+            return True
+
+        self.print_warning("La comparaison des modèles a échoué")
+        return True  # Workflow non bloquant
     
     def run_workflow(self):
         """Exécute le workflow complet"""
@@ -587,6 +668,9 @@ class AITrainingWorkflow:
         self.print_info(f"CV folds (entraînement): {self.cv_folds}")
         self.print_info(f"Tuning hyperparamètres: {'oui' if self.enable_tuning else 'non'}")
         self.print_info(f"Split anti-fuite PCAP: {'oui' if self.enable_group_split else 'non'}")
+        self.print_info(f"Modèle actif cible: {self.active_model_name}")
+        self.print_info(f"Comparaison modèle actif: {'oui' if self.enable_model_comparison else 'non'}")
+        self.print_info(f"Promotion automatique: {'oui' if self.auto_promote else 'non'}")
         
         start_time = time.time()
         
@@ -627,6 +711,9 @@ class AITrainingWorkflow:
         # Étape 5: Test (optionnel)
         if model_name:
             self.step5_test_model(model_name)
+            self.step6_evaluate_model(model_name)
+            if self.enable_model_comparison:
+                self.step7_compare_and_promote(model_name)
         
         # Résumé final
         elapsed_time = time.time() - start_time
@@ -661,8 +748,10 @@ class AITrainingWorkflow:
         
         print(f"\n{Colors.OKCYAN}Prochaines étapes:{Colors.ENDC}")
         print(f"  1. Tester le modèle: cd ml && python ml_detector.py -f ../zeus/{self.pcap_file} --model models/{model_name}")
-        print(f"  2. Utiliser l'analyse hybride: cd ml && python hybrid_analyzer.py -f ../zeus/{self.pcap_file}")
-        print(f"  3. Améliorer avec feedback: Voir ml/QUICKSTART.md section 'Cas 2: Amélioration Continue'")
+        print(f"  2. Évaluer le modèle: cd ml && python trainer.py --evaluate --model-type random_forest --model-name {model_name} --db ../zeus/pcap_database.db --dataset-mode {'flow' if self.use_flow_dataset else 'packet'}")
+        print(f"  3. Comparer au modèle actif: cd ml && python trainer.py --compare --model-type random_forest --model-name {self.active_model_name} --candidate-model-name {model_name} --db ../zeus/pcap_database.db --dataset-mode {'flow' if self.use_flow_dataset else 'packet'}")
+        print(f"  4. Utiliser l'analyse hybride: cd ml && python hybrid_analyzer.py -f ../zeus/{self.pcap_file}")
+        print(f"  5. Améliorer avec feedback: Voir ml/QUICKSTART.md section 'Cas 2: Amélioration Continue'")
 
         if self.auto_open_validation_ui:
             self.open_manual_validation_ui()
@@ -741,6 +830,24 @@ Exemples:
         action="store_true",
         help="Ne pas demander d'ouvrir l'interface de validation manuelle en fin de workflow"
     )
+
+    parser.add_argument(
+        "--active-model-name",
+        default="threat_detector",
+        help="Nom du modèle actif utilisé comme baseline pour la comparaison (défaut: threat_detector)"
+    )
+
+    parser.add_argument(
+        "--disable-model-comparison",
+        action="store_true",
+        help="Désactiver la comparaison du nouveau modèle avec le modèle actif"
+    )
+
+    parser.add_argument(
+        "--auto-promote",
+        action="store_true",
+        help="Promouvoir automatiquement le nouveau modèle s'il est meilleur"
+    )
     
     args = parser.parse_args()
     
@@ -770,6 +877,9 @@ Exemples:
         use_flow_dataset=args.use_flow_dataset,
         auto_open_validation_ui=args.open_validation_ui,
         prompt_validation_ui=not args.no_validation_ui_prompt,
+        active_model_name=args.active_model_name,
+        enable_model_comparison=not args.disable_model_comparison,
+        auto_promote=args.auto_promote,
     )
     
     try:

@@ -27,6 +27,9 @@ from sklearn.metrics import (
     roc_auc_score,
     precision_recall_curve,
     f1_score,
+    accuracy_score,
+    precision_score,
+    recall_score,
 )
 import logging
 
@@ -88,6 +91,49 @@ class ThreatDetectionModel:
     def load(self, name: str):
         """Charge le modèle"""
         raise NotImplementedError
+
+    def evaluate_dataset(self, X: np.ndarray, y: np.ndarray) -> Dict[str, Any]:
+        """
+        Évalue le modèle courant sur un dataset complet.
+
+        Returns:
+            Dict de métriques globales et orientées classe malveillante.
+        """
+        if self.model is None:
+            raise ValueError("Model not trained or loaded")
+        if len(X) == 0 or len(y) == 0:
+            raise ValueError("Dataset vide, évaluation impossible")
+
+        y_pred = self.predict(X)
+        y_proba = None
+        try:
+            proba_all = self.predict_proba(X)
+            if proba_all.ndim == 2 and proba_all.shape[1] > 1:
+                y_proba = proba_all[:, 1]
+        except Exception:
+            y_proba = None
+
+        metrics: Dict[str, Any] = {
+            'samples': int(len(y)),
+            'accuracy': float(accuracy_score(y, y_pred)),
+            'precision_malicious': float(precision_score(y, y_pred, pos_label=1, zero_division=0)),
+            'recall_malicious': float(recall_score(y, y_pred, pos_label=1, zero_division=0)),
+            'f1_malicious': float(f1_score(y, y_pred, pos_label=1, zero_division=0)),
+            'classification_report': classification_report(y, y_pred, output_dict=True, zero_division=0),
+            'confusion_matrix': confusion_matrix(y, y_pred).tolist(),
+        }
+
+        cm = metrics['confusion_matrix']
+        if len(cm) == 2 and len(cm[0]) == 2:
+            tn, fp = cm[0]
+            fn, tp = cm[1]
+            metrics['false_positive_rate'] = float(fp / (fp + tn)) if (fp + tn) > 0 else 0.0
+            metrics['false_negative_rate'] = float(fn / (fn + tp)) if (fn + tp) > 0 else 0.0
+
+        if y_proba is not None and len(np.unique(y)) > 1:
+            metrics['roc_auc'] = float(roc_auc_score(y, y_proba))
+
+        return metrics
     
     def _generate_text_report(self, name: str) -> str:
         """Génère un rapport texte détaillé sur le modèle"""

@@ -13,7 +13,7 @@ pip install -r requirements.txt
 cd ..
 ```
 
-## 📚 Workflow Complet en 5 Étapes
+## 📚 Workflow Complet en 7 Étapes
 
 ### Étape 1 : Capturer du Trafic Réseau
 
@@ -51,8 +51,8 @@ Shape: (15000, 50)
 ### Étape 4 : Entraîner le Modèle
 
 ```bash
-# Entraîner un Random Forest
-python trainer.py --train --model-type random_forest --model-name threat_detector --db ../zeus/pcap_database.db
+# Entraîner un Random Forest (split anti-fuite + CV + tuning)
+python trainer.py --train --model-type random_forest --model-name threat_detector --db ../zeus/pcap_database.db --dataset-mode packet --cv-folds 5 --tune-hyperparams
 ```
 
 **Résultat attendu :**
@@ -61,7 +61,9 @@ Entraînement Random Forest...
 Accuracy: Train=0.9842, Val=0.9521
 ROC AUC: 0.9834
 
-Modèle sauvegardé: ml/models/threat_detector.pkl
+F1 (seuil optimisé): 0.94xx
+Seuil optimisé: 0.63xx
+Modèle sauvegardé: threat_detector
 ```
 
 ### Étape 5 : Utiliser l'IA pour Détecter
@@ -73,6 +75,24 @@ python ml_detector.py -f ../zeus/captures/new_traffic.pcap --model models/threat
 # Avec l'approche hybride (recommandé)
 python hybrid_analyzer.py -f ../zeus/captures/new_traffic.pcap
 ```
+
+### Étape 6 : Évaluer le modèle entraîné
+
+```bash
+python trainer.py --evaluate --model-type random_forest --model-name threat_detector --db ../zeus/pcap_database.db --dataset-mode packet
+```
+
+### Étape 7 : Comparer au modèle actif (et promotion optionnelle)
+
+```bash
+# Comparer un candidat à votre modèle actif
+python trainer.py --compare --model-type random_forest --model-name threat_detector --candidate-model-name Zeus2 --db ../zeus/pcap_database.db --dataset-mode packet
+
+# Promouvoir automatiquement si meilleur
+python trainer.py --compare --model-type random_forest --model-name threat_detector --candidate-model-name Zeus2 --db ../zeus/pcap_database.db --dataset-mode packet --promote-if-better --active-model-name threat_detector
+```
+
+> `trainer.py` supporte aussi `--dataset-mode flow` pour entraîner/évaluer sur des flux plutôt que des paquets.
 
 ## 🎯 Cas d'Usage Pratiques
 
@@ -127,11 +147,28 @@ cd ml
 python manual_validation_ui.py --db ../zeus/pcap_database.db
 ```
 
-Fonctionnalites principales:
+Fonctionnalités principales:
 - Liste des alertes avec filtre des elements non valides
 - Validation rapide: "Confirmer menace" (label=1) ou "Marquer normal" (label=0)
 - Choix de la confiance du feedback (0 a 1)
-- Re-entrainement declenchable directement depuis l'interface
+- Ré-entraînement déclenchable directement depuis l'interface
+
+Options utiles:
+
+```bash
+# Ajuster le seuil de feedback avant recommandation de ré-entraînement
+python manual_validation_ui.py --db ../zeus/pcap_database.db --feedback-threshold 20
+```
+
+Intégration au workflow principal:
+
+```bash
+# Lance le workflow complet et ouvre l'UI à la fin
+python train_ai_workflow.py --db zeus/pcap_database.db --open-validation-ui
+
+# Lance le workflow sans poser la question d'ouverture d'UI
+python train_ai_workflow.py --db zeus/pcap_database.db --no-validation-ui-prompt
+```
 
 ### Cas 3 : Analyse en Temps Réel
 

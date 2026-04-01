@@ -73,14 +73,24 @@ python trainer.py --build-dataset --db ../zeus/pcap_database.db
 ### Étape 2 : Entraîner un Modèle
 
 ```bash
-# Random Forest (recommandé pour commencer)
-python trainer.py --train --model-type random_forest --model-name threat_detector --db ../zeus/pcap_database.db
+# Random Forest (recommandé pour commencer, avec CV + tuning)
+python trainer.py --train --model-type random_forest --model-name threat_detector --db ../zeus/pcap_database.db --cv-folds 5 --tune-hyperparams --dataset-mode packet
 
 # Isolation Forest (détection d'anomalies)
 python trainer.py --train --model-type anomaly --model-name anomaly_detector --db ../zeus/pcap_database.db
 ```
 
-### Étape 3 : Utiliser le Détecteur ML
+### Étape 3 : Évaluer et comparer un modèle
+
+```bash
+# Évaluer le modèle courant sur le dataset
+python trainer.py --evaluate --model-type random_forest --model-name threat_detector --db ../zeus/pcap_database.db --dataset-mode packet
+
+# Comparer baseline vs candidat
+python trainer.py --compare --model-type random_forest --model-name threat_detector --candidate-model-name Zeus2 --db ../zeus/pcap_database.db --dataset-mode packet
+```
+
+### Étape 4 : Utiliser le Détecteur ML
 
 ```bash
 # Analyser un fichier PCAP
@@ -93,7 +103,7 @@ python ml_detector.py -f capture.pcap --threshold 0.8
 python ml_detector.py -f capture.pcap --feature-importance
 ```
 
-### Étape 4 : Apprentissage Continu
+### Étape 5 : Apprentissage Continu
 
 ```python
 from ml.trainer import ContinuousLearningSystem
@@ -191,7 +201,12 @@ class HybridThreatAnalyzer(ThreatAnalyzer):
    └─> system.add_feedback() enregistre les corrections
    └─> Après N feedbacks, ré-entraînement automatique
 
-5. Évolution continue
+5. Validation/évaluation continue
+   └─> trainer.py --evaluate pour mesurer le modèle courant
+   └─> trainer.py --compare pour décider la promotion
+   └─> Option --promote-if-better pour mise à jour semi-automatique
+
+6. Évolution continue
    └─> Le modèle s'améliore au fil du temps
    └─> Détecte de nouveaux patterns non couverts par les règles
    └─> S'adapte aux spécificités de votre réseau

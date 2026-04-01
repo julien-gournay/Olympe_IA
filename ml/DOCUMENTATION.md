@@ -26,7 +26,7 @@
        │
        ▼
 ┌─────────────────────┐
-│ Feature Extractor   │  ← 85 caractéristiques numériques
+│ Feature Extractor   │  ← 50 features/paquet ou 85 features/flux
 │ (feature_extractor) │
 └──────┬──────────────┘
        │
@@ -73,7 +73,11 @@
 
 ## Extraction de Features
 
-### 85 Features Extraites
+### Features Extraites
+
+Le module expose deux représentations:
+- **Par paquet**: vecteur de **50 features** (`extract_packet_features`)
+- **Par flux**: vecteur de **85 features** (`extract_flow_features`)
 
 #### 1. Features de Base (10 features)
 ```python
@@ -250,19 +254,41 @@ flow_features = extractor.extract_flow_features(packets_list)  # → np.array(85
 from ml.trainer import ThreatDatasetBuilder, ContinuousLearningSystem
 from ml.threat_models import RandomForestThreatModel
 
-# 1. Construire dataset
+# 1. Construire dataset (avec groupes anti-fuite par fichier PCAP)
 builder = ThreatDatasetBuilder("pcap_database.db")
-X, y = builder.build_from_alerts()
+X, y, groups = builder.build_from_alerts_with_groups()
 
-# 2. Entraîner
+# 2. Entraîner (CV + split anti-fuite + tuning possible)
 model = RandomForestThreatModel()
-metrics = model.train(X, y, validation_split=0.2)
+metrics = model.train(
+    X, y,
+    validation_split=0.2,
+    groups=groups,
+    cv_folds=5,
+    use_hyperparameter_search=True
+)
 
 # 3. Sauvegarder
 model.save("my_model")
 
 # 4. Charger
 model.load("my_model")
+```
+
+### CLI `trainer.py` (train / evaluate / compare)
+
+```bash
+# Training
+python trainer.py --train --model-type random_forest --model-name Zeus1 --db ../zeus/pcap_database.db --dataset-mode packet --cv-folds 5 --tune-hyperparams
+
+# Evaluation
+python trainer.py --evaluate --model-type random_forest --model-name Zeus1 --db ../zeus/pcap_database.db --dataset-mode packet
+
+# Comparaison baseline vs candidat
+python trainer.py --compare --model-type random_forest --model-name threat_detector --candidate-model-name Zeus1 --db ../zeus/pcap_database.db --dataset-mode packet
+
+# Promotion auto si meilleur
+python trainer.py --compare --model-type random_forest --model-name threat_detector --candidate-model-name Zeus1 --db ../zeus/pcap_database.db --dataset-mode packet --promote-if-better --active-model-name threat_detector
 ```
 
 ### Détection
@@ -307,6 +333,42 @@ system.add_feedback(
 model, metrics = system.retrain_with_feedback(
     model_name="improved_model"
 )
+```
+
+### UI de Feedback (validation manuelle)
+
+L'interface locale `ml/manual_validation_ui.py` permet d'alimenter `ml_feedback` sans écrire de code.
+
+```bash
+cd ml
+python manual_validation_ui.py --db ../zeus/pcap_database.db
+```
+
+Fonctionnalités:
+- Affichage des alertes `threat_alerts` avec filtre "non validées"
+- Détail complet de l'alerte sélectionnée (règle, IP, protocole, description)
+- Actions rapides: `Confirmer menace (label=1)` / `Marquer normal (label=0)`
+- Confiance configurable (0.0 à 1.0) pour chaque feedback
+- Ré-entraînement manuel depuis l'UI avec choix `model_type` et `model_name`
+
+Options CLI:
+
+```bash
+python manual_validation_ui.py --db ../zeus/pcap_database.db --feedback-threshold 20
+```
+
+Le paramètre `--feedback-threshold` détermine le nombre de feedbacks requis avant recommandation de ré-entraînement.
+
+### Intégration avec le workflow guidé
+
+Le script `train_ai_workflow.py` peut ouvrir automatiquement l'UI de feedback en fin de pipeline:
+
+```bash
+# Ouvre automatiquement l'UI à la fin
+python train_ai_workflow.py --db zeus/pcap_database.db --open-validation-ui
+
+# N'affiche pas la question d'ouverture de l'UI
+python train_ai_workflow.py --db zeus/pcap_database.db --no-validation-ui-prompt
 ```
 
 ---
@@ -551,5 +613,5 @@ mv ml/models/threat_detector_v2.pkl ml/models/threat_detector.pkl
 
 ---
 
-**Dernière mise à jour** : Janvier 2026  
-**Version** : 1.0.0
+**Dernière mise à jour** : Avril 2026  
+**Version** : 1.1.0

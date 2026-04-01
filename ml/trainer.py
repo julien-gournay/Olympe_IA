@@ -9,6 +9,7 @@ import sys
 import numpy as np
 import sqlite3
 import logging
+import shutil
 from pathlib import Path
 from datetime import datetime
 from typing import List, Dict, Tuple, Optional, Literal, overload
@@ -672,11 +673,21 @@ def main():
                        help='Entraîner un nouveau modèle')
     parser.add_argument('--retrain', action='store_true',
                        help='Ré-entraîner avec feedback')
+    parser.add_argument('--evaluate', action='store_true',
+                       help='Évaluer un modèle existant sur le dataset courant')
+    parser.add_argument('--compare', action='store_true',
+                       help='Comparer deux modèles existants sur le même dataset')
     parser.add_argument('--model-type', default='random_forest',
                        choices=['random_forest', 'anomaly'],
                        help='Type de modèle')
     parser.add_argument('--model-name', default=None,
                        help='Nom du modèle (défaut: auto-versionnement ZeusX)')
+    parser.add_argument('--candidate-model-name', default=None,
+                       help='Nom du modèle candidat (utilisé avec --compare)')
+    parser.add_argument('--promote-if-better', action='store_true',
+                       help='Avec --compare, promeut automatiquement le candidat si meilleur')
+    parser.add_argument('--active-model-name', default='threat_detector',
+                       help='Nom du modèle actif à remplacer lors de la promotion automatique')
     parser.add_argument('--db', default='pcap_database.db',
                        help='Chemin vers la base de données')
     parser.add_argument('--no-group-split', action='store_true',
@@ -765,6 +776,162 @@ def main():
         
         print("\n=== Ré-entraînement terminé ===")
         print(f"Accuracy: {metrics.get('val_accuracy', 0):.4f}")
+
+    elif args.evaluate:
+        builder = ThreatDatasetBuilder(args.db)
+        if args.dataset_mode == 'flow':
+            X, y, _ = builder.build_from_flows_with_groups()
+        else:
+            X, y, _ = builder.build_from_alerts_with_groups()
+
+        if len(X) == 0:
+            print("\n❌ ERREUR: Dataset vide, évaluation impossible")
+            sys.exit(1)
+
+        if args.model_name is None:
+            print("\n❌ ERREUR: --model-name est requis avec --evaluate")
+            print("Exemple: python trainer.py --evaluate --model-type random_forest --model-name Zeus1 --db ../zeus/pcap_database.db")
+            sys.exit(1)
+
+        if args.model_type == 'random_forest':
+            model = RandomForestThreatModel(db_path=args.db)
+        else:
+            model = AnomalyDetectionModel(db_path=args.db)
+
+        model.load(args.model_name)
+        metrics = model.evaluate_dataset(X, y)
+
+        print("\n=== Évaluation du modèle ===")
+        print(f"Modèle: {args.model_name}")
+        print(f"Type: {args.model_type}")
+        print(f"Mode dataset: {args.dataset_mode}")
+        print(f"Échantillons: {metrics.get('samples', 0)}")
+        print(f"Accuracy: {metrics.get('accuracy', 0):.4f}")
+        print(f"Precision (malicious): {metrics.get('precision_malicious', 0):.4f}")
+        print(f"Recall (malicious): {metrics.get('recall_malicious', 0):.4f}")
+        print(f"F1 (malicious): {metrics.get('f1_malicious', 0):.4f}")
+        if 'false_positive_rate' in metrics:
+            print(f"False Positive Rate: {metrics['false_positive_rate']:.4f}")
+        if 'false_negative_rate' in metrics:
+            print(f"False Negative Rate: {metrics['false_negative_rate']:.4f}")
+        if 'roc_auc' in metrics:
+            print(f"ROC AUC: {metrics['roc_auc']:.4f}")
+
+    elif args.compare:
+        builder = ThreatDatasetBuilder(args.db)
+        if args.dataset_mode == 'flow':
+            X, y, _ = builder.build_from_flows_with_groups()
+        else:
+            X, y, _ = builder.build_from_alerts_with_groups()
+
+        if len(X) == 0:
+            print("\n❌ ERREUR: Dataset vide, comparaison impossible")
+            sys.exit(1)
+
+        if args.model_name is None or args.candidate_model_name is None:
+            print("\n❌ ERREUR: --model-name et --candidate-model-name sont requis avec --compare")
+            print("Exemple: python trainer.py --compare --model-type random_forest --model-name Zeus1 --candidate-model-name Zeus2 --db ../zeus/pcap_database.db")
+            sys.exit(1)
+
+        if args.model_type == 'random_forest':
+            baseline_model = RandomForestThreatModel(db_path=args.db)
+            candidate_model = RandomForestThreatModel(db_path=args.db)
+        else:
+            baseline_model = AnomalyDetectionModel(db_path=args.db)
+            candidate_model = AnomalyDetectionModel(db_path=args.db)
+
+        baseline_model.load(args.model_name)
+        candidate_model.load(args.candidate_model_name)
+
+        baseline_metrics = baseline_model.evaluate_dataset(X, y)
+        candidate_metrics = candidate_model.evaluate_dataset(X, y)
+
+        print("\n=== Comparaison de modèles ===")
+        print(f"Type: {args.model_type}")
+        print(f"Mode dataset: {args.dataset_mode}")
+        print(f"Échantillons: {len(X)}")
+        print("")
+        print(f"Baseline : {args.model_name}")
+        print(f"  Accuracy: {baseline_metrics.get('accuracy', 0):.4f}")
+        print(f"  Precision (malicious): {baseline_metrics.get('precision_malicious', 0):.4f}")
+        print(f"  Recall (malicious): {baseline_metrics.get('recall_malicious', 0):.4f}")
+        print(f"  F1 (malicious): {baseline_metrics.get('f1_malicious', 0):.4f}")
+        if 'false_positive_rate' in baseline_metrics:
+            print(f"  False Positive Rate: {baseline_metrics['false_positive_rate']:.4f}")
+        if 'false_negative_rate' in baseline_metrics:
+            print(f"  False Negative Rate: {baseline_metrics['false_negative_rate']:.4f}")
+        if 'roc_auc' in baseline_metrics:
+            print(f"  ROC AUC: {baseline_metrics['roc_auc']:.4f}")
+        print("")
+        print(f"Candidat : {args.candidate_model_name}")
+        print(f"  Accuracy: {candidate_metrics.get('accuracy', 0):.4f}")
+        print(f"  Precision (malicious): {candidate_metrics.get('precision_malicious', 0):.4f}")
+        print(f"  Recall (malicious): {candidate_metrics.get('recall_malicious', 0):.4f}")
+        print(f"  F1 (malicious): {candidate_metrics.get('f1_malicious', 0):.4f}")
+        if 'false_positive_rate' in candidate_metrics:
+            print(f"  False Positive Rate: {candidate_metrics['false_positive_rate']:.4f}")
+        if 'false_negative_rate' in candidate_metrics:
+            print(f"  False Negative Rate: {candidate_metrics['false_negative_rate']:.4f}")
+        if 'roc_auc' in candidate_metrics:
+            print(f"  ROC AUC: {candidate_metrics['roc_auc']:.4f}")
+
+        # Verdict de promotion
+        baseline_f1 = baseline_metrics.get('f1_malicious', 0.0)
+        candidate_f1 = candidate_metrics.get('f1_malicious', 0.0)
+        baseline_fpr = baseline_metrics.get('false_positive_rate', 1.0)
+        candidate_fpr = candidate_metrics.get('false_positive_rate', 1.0)
+
+        promote = False
+        reason = ""
+        if candidate_f1 > baseline_f1:
+            promote = True
+            reason = "F1 classe malveillante supérieur"
+        elif candidate_f1 == baseline_f1 and candidate_fpr <= baseline_fpr:
+            promote = True
+            reason = "F1 égal et taux de faux positifs inférieur/égal"
+        else:
+            reason = "gain insuffisant sur F1 malveillant (ou FPR plus mauvais)"
+
+        print("")
+        print("=== Verdict ===")
+        if promote:
+            print(f"✅ Promouvoir le candidat: {args.candidate_model_name}")
+            print(f"Raison: {reason}")
+        else:
+            print(f"❌ Garder le baseline: {args.model_name}")
+            print(f"Raison: {reason}")
+
+        if args.promote_if_better:
+            if not promote:
+                print("\nPromotion automatique ignorée: le candidat n'est pas meilleur.")
+            else:
+                model_dir = Path("models")
+                model_dir.mkdir(parents=True, exist_ok=True)
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                backup_prefix = f"{args.active_model_name}_backup_{timestamp}"
+                suffixes = [".pkl", "_scaler.pkl", "_metadata.json", "_report.txt"]
+
+                copied_any = False
+                for suffix in suffixes:
+                    candidate_path = model_dir / f"{args.candidate_model_name}{suffix}"
+                    if not candidate_path.exists():
+                        continue
+
+                    active_path = model_dir / f"{args.active_model_name}{suffix}"
+
+                    # Backup de l'actif existant avant remplacement
+                    if active_path.exists():
+                        backup_path = model_dir / f"{backup_prefix}{suffix}"
+                        shutil.copy2(active_path, backup_path)
+
+                    shutil.copy2(candidate_path, active_path)
+                    copied_any = True
+
+                if copied_any:
+                    print(f"\n✅ Promotion effectuée: {args.candidate_model_name} -> {args.active_model_name}")
+                    print(f"Backup actif créé avec préfixe: {backup_prefix}")
+                else:
+                    print("\n❌ Promotion impossible: aucun artefact candidat trouvé dans ml/models")
     
     else:
         parser.print_help()
