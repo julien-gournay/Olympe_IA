@@ -16,3 +16,6 @@ __pycache__/
 
 # Fichiers report
 *_report.txt
+
+# Paramètres de Claude
+.claude/settings.local.json
